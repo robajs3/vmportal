@@ -11,6 +11,7 @@ services:
       APP_DB_USER: ${APP_DB_USER:-vmportal_app}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Ustaw APP_DB_PASSWORD w .env}
       GUAC_ADMIN_USER: ${GUAC_ADMIN_USER:-guacadmin}
+      DATABASE_URL: postgresql://${APP_DB_USER:-vmportal_app}:${APP_DB_PASSWORD}@postgres:5432/app_db
       GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD:?Ustaw GUAC_ADMIN_PASSWORD w .env}
     volumes:
       - ./pgdata:/var/lib/postgresql/data

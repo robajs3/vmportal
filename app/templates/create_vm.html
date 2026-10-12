@@ -60,12 +60,113 @@
               <option value="{{ iso }}" {{ 'selected' if form.iso == iso }}>{{ iso }}</option>
             {% endfor %}
           </select>
-          {% if not isos %}<small>Brak plików ISO w puli. Dodaj je na serwerze (patrz INSTALL.md).</small>{% endif %}
+          {% if not isos %}<small id="iso-empty">Brak plików ISO w puli - wgraj własny przyciskiem poniżej.</small>{% endif %}
         </label>
       </div>
 
-      <button type="submit" class="vm-btn vm-btn-primary">Utwórz i uruchom</button>
+      <div class="vm-upload">
+        <div class="vm-upload-row">
+          <button type="button" class="vm-btn" id="iso-pick">⬆ Wgraj własny ISO</button>
+          <input type="file" id="iso-file" accept=".iso" hidden>
+          <small id="iso-status">Nie ma Twojego obrazu na liście? Wgrany plik zostaje w puli i będzie dostępny przy kolejnych maszynach (limit {{ limits.iso_mb }} MB).</small>
+        </div>
+        <div class="vm-progress" id="iso-progress" hidden><div class="vm-progress-bar" id="iso-bar"></div></div>
+      </div>
+
+      <button type="submit" class="vm-btn vm-btn-primary" id="create-btn">Utwórz i uruchom</button>
     </form>
   </main>
+
+  <script>
+  (function () {
+    var UPLOAD_URL = {{ url_for('upload_iso')|tojson }};
+    var MAX_BYTES = {{ limits.iso_mb }} * 1024 * 1024;
+
+    var pick = document.getElementById('iso-pick');
+    var file = document.getElementById('iso-file');
+    var status = document.getElementById('iso-status');
+    var progress = document.getElementById('iso-progress');
+    var bar = document.getElementById('iso-bar');
+    var select = document.querySelector('select[name="iso"]');
+    var submit = document.getElementById('create-btn');
+    var idleText = status.textContent;
+
+    function setStatus(text, isError) {
+      status.textContent = text;
+      status.style.color = isError ? '#dc2626' : '';
+      status.style.opacity = isError ? '1' : '';
+    }
+    function mb(bytes) { return (bytes / 1048576).toFixed(bytes > 1e9 ? 0 : 1); }
+    function busy(on) {
+      pick.disabled = on;
+      submit.disabled = on;   // nie pozwalamy utworzyć maszyny, zanim ISO się nie wgra
+      select.disabled = on;
+    }
+
+    pick.addEventListener('click', function () { file.click(); });
+
+    file.addEventListener('change', function () {
+      var f = file.files[0];
+      file.value = '';
+      if (!f) return;
+
+      if (!/\.iso$/i.test(f.name)) { setStatus('Wybierz plik z rozszerzeniem .iso.', true); return; }
+      if (f.size > MAX_BYTES) { setStatus('Plik jest za duży (limit {{ limits.iso_mb }} MB).', true); return; }
+
+      busy(true);
+      progress.hidden = false;
+      bar.style.width = '0%';
+      setStatus('Wgrywanie ' + f.name + '…', false);
+
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', UPLOAD_URL + '?name=' + encodeURIComponent(f.name));
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+      xhr.upload.onprogress = function (e) {
+        if (!e.lengthComputable) return;
+        var pct = Math.round(e.loaded / e.total * 100);
+        bar.style.width = pct + '%';
+        setStatus('Wgrywanie ' + f.name + ': ' + pct + '% (' + mb(e.loaded) + ' / ' + mb(e.total) + ' MB)', false);
+      };
+
+      function fail(msg) {
+        busy(false);
+        progress.hidden = true;
+        setStatus(msg, true);
+      }
+
+      xhr.onerror = function () { fail('Błąd połączenia podczas wgrywania.'); };
+      xhr.onabort = function () { fail('Wgrywanie przerwane.'); };
+      xhr.onload = function () {
+        var res = null;
+        try { res = JSON.parse(xhr.responseText); } catch (e) {}
+        if (!res) { fail('Nieoczekiwana odpowiedź serwera (sesja mogła wygasnąć - odśwież stronę).'); return; }
+        if (xhr.status !== 200 || !res.ok) { fail(res.error || 'Nie udało się wgrać pliku.'); return; }
+
+        // dodaj do listy i zaznacz
+        var exists = Array.prototype.some.call(select.options, function (o) { return o.value === res.name; });
+        if (!exists) {
+          var opt = document.createElement('option');
+          opt.value = res.name;
+          opt.textContent = res.name;
+          select.appendChild(opt);
+        }
+        select.value = res.name;
+        var empty = document.getElementById('iso-empty');
+        if (empty) empty.remove();
+
+        busy(false);
+        progress.hidden = true;
+        setStatus('Wgrano „' + res.name + '” i wybrano go jako obraz instalacyjny. ' + idleText, false);
+      };
+
+      xhr.send(f);   // surowe body - serwer streamuje je prosto do libvirt
+    });
+
+    window.addEventListener('beforeunload', function (e) {
+      if (pick.disabled) { e.preventDefault(); e.returnValue = ''; }
+    });
+  })();
+  </script>
 </body>
 </html>

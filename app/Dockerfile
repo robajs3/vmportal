@@ -22,4 +22,5 @@ USER app
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "app:app"]
+# gthread + długi timeout: wgrywanie ISO (kilka GB) trwa minuty i nie może blokować całego workera
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--worker-class", "gthread", "--threads", "4", "--timeout", "3600", "app:app"]

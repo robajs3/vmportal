@@ -87,6 +87,7 @@ services:
       GUAC_ADMIN_USER: ${GUAC_ADMIN_USER:-guacadmin}
       GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD:?Ustaw GUAC_ADMIN_PASSWORD w .env}
       VM_HOST: ${VM_HOST:-host.docker.internal}
+      MAX_ISO_MB: ${MAX_ISO_MB:-10240}
       # SSO (LoginHub) — SSO_SECRET musi być DOKŁADNIE tą samą wartością co w .env LoginHub.
       # hub-web to nazwa kontenera LoginHub w sieci sso_net.
       SSO_SECRET: ${SSO_SECRET:-}

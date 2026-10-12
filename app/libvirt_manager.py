@@ -291,12 +291,24 @@ def _pick_vnc_port(conn, reserved):
     raise LibvirtError("Brak wolnych portów VNC w skonfigurowanym zakresie.")
 
 
-def _domain_xml(name, vcpus, ram_mb, disk_path, iso_path, os_type, port, vnc_password):
-    windows = os_type == "windows"
+# Profile sprzętowe wybierane w formularzu tworzenia maszyny.
+OS_PROFILES = {
+    "linux": dict(machine="q35", disk_bus="virtio", disk_dev="vda", cdrom_bus="sata", cdrom_dev="sdb",
+                  nic="virtio", clock="utc", balloon="virtio"),
     # Windows nie ma sterowników virtio na instalatorze -> SATA + e1000e
-    disk_bus, disk_dev = ("sata", "sda") if windows else ("virtio", "vda")
-    nic_model = "e1000e" if windows else "virtio"
-    clock = "localtime" if windows else "utc"
+    "windows": dict(machine="q35", disk_bus="sata", disk_dev="sda", cdrom_bus="sata", cdrom_dev="sdb",
+                    nic="e1000e", clock="localtime", balloon="virtio"),
+    # Starsze Windowsy (XP, 2000, 2003, często 7 bez sterowników): płyta i440fx ("pc"), bo q35 nie ma
+    # magistrali IDE; dysk i CD-ROM na IDE, karta rtl8139 (sterownik jest w systemie), bez balloona.
+    "windows_legacy": dict(machine="pc", disk_bus="ide", disk_dev="hda", cdrom_bus="ide", cdrom_dev="hdc",
+                           nic="rtl8139", clock="localtime", balloon="none"),
+}
+
+
+def _domain_xml(name, vcpus, ram_mb, disk_path, iso_path, os_type, port, vnc_password):
+    prof = OS_PROFILES[os_type]
+    disk_bus, disk_dev = prof["disk_bus"], prof["disk_dev"]
+    nic_model, clock = prof["nic"], prof["clock"]
 
     cdrom = ""
     if iso_path:
@@ -304,7 +316,7 @@ def _domain_xml(name, vcpus, ram_mb, disk_path, iso_path, os_type, port, vnc_pas
             "<disk type='file' device='cdrom'>"
             "<driver name='qemu' type='raw'/>"
             f"<source file='{escape(iso_path, {chr(39): '&apos;'})}'/>"
-            "<target dev='sdb' bus='sata'/><readonly/><boot order='2'/>"
+            f"<target dev='{prof['cdrom_dev']}' bus='{prof['cdrom_bus']}'/><readonly/><boot order='2'/>"
             "</disk>"
         )
 
@@ -314,7 +326,7 @@ def _domain_xml(name, vcpus, ram_mb, disk_path, iso_path, os_type, port, vnc_pas
   <memory unit='MiB'>{ram_mb}</memory>
   <currentMemory unit='MiB'>{ram_mb}</currentMemory>
   <vcpu>{vcpus}</vcpu>
-  <os><type arch='x86_64' machine='q35'>hvm</type></os>
+  <os><type arch='x86_64' machine='{prof['machine']}'>hvm</type></os>
   <features><acpi/><apic/></features>
   <cpu mode='host-passthrough'/>
   <clock offset='{clock}'/>
@@ -338,7 +350,7 @@ def _domain_xml(name, vcpus, ram_mb, disk_path, iso_path, os_type, port, vnc_pas
     </graphics>
     <video><model type='vga' vram='16384'/></video>
     <input type='tablet' bus='usb'/>
-    <memballoon model='virtio'/>
+    <memballoon model='{prof['balloon']}'/>
   </devices>
 </domain>
 """

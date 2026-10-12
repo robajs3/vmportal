@@ -51,6 +51,7 @@
           <select name="os_type">
             <option value="linux" {{ 'selected' if form.os_type == 'linux' }}>Linux (virtio)</option>
             <option value="windows" {{ 'selected' if form.os_type == 'windows' }}>Windows (SATA / e1000e)</option>
+            <option value="windows_legacy" {{ 'selected' if form.os_type == 'windows_legacy' }}>Windows legacy (IDE / rtl8139) - XP, 2000, 2003, 7</option>
           </select>
         </label>
         <label>Obraz instalacyjny (ISO)

@@ -1,7 +1,7 @@
 import os
 import secrets
 import time
-from flask import Flask, render_template, redirect, url_for, request, flash, abort, make_response
+from flask import Flask, render_template, redirect, url_for, request, flash, abort, make_response, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -11,6 +11,7 @@ from flask_bcrypt import Bcrypt
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError, OperationalError
+from werkzeug.utils import secure_filename
 
 import guac
 import libvirt_manager as lv
@@ -76,6 +77,7 @@ LIMITS = {
     "ram_mb": int(os.environ.get("MAX_RAM_MB", "8192")),
     "disk_gb": int(os.environ.get("MAX_DISK_GB", "100")),
     "vms_per_user": int(os.environ.get("MAX_VMS_PER_USER", "5")),
+    "iso_mb": int(os.environ.get("MAX_ISO_MB", "10240")),  # maks. rozmiar wgrywanego ISO
 }
 MIN_RAM_MB = 512
 MIN_DISK_GB = 5
@@ -459,6 +461,47 @@ def new_vm():
 
     return render_template("create_vm.html", form=form, isos=isos, limits=LIMITS,
                            min_ram=MIN_RAM_MB, min_disk=MIN_DISK_GB)
+
+
+@app.route("/isos/upload", methods=["POST"])
+@login_required
+def upload_iso():
+    """Wgrywanie własnego ISO do puli ISO (widoczne potem na liście przy tworzeniu maszyn).
+    Plik przychodzi jako SUROWE body żądania (nie multipart), a nazwa w ?name=, dzięki czemu
+    kilkugigabajtowy obraz płynie strumieniem prosto do libvirt, bez plików tymczasowych."""
+    name = secure_filename(request.args.get("name", ""))
+    if not name.lower().endswith(".iso") or len(name) > 120:
+        return jsonify(error="Nieprawidłowa nazwa pliku - wymagane rozszerzenie .iso."), 400
+
+    size = request.content_length
+    if not size:
+        return jsonify(error="Brak rozmiaru pliku w żądaniu."), 400
+    if size > LIMITS["iso_mb"] * 1024 * 1024:
+        return jsonify(error=f"Plik jest za duży (limit {LIMITS['iso_mb']} MB)."), 413
+
+    try:
+        lv.upload_iso(name, request.stream, size)
+    except lv.LibvirtError as exc:
+        return jsonify(error=str(exc)), 400
+    except OSError as exc:  # np. klient zerwał połączenie w trakcie wysyłania
+        app.logger.warning("Upload ISO '%s' przerwany: %s", name, exc)
+        return jsonify(error="Przesyłanie zostało przerwane."), 400
+
+    app.logger.info("Użytkownik %s wgrał ISO '%s' (%d B)", current_user.username, name, size)
+    return jsonify(ok=True, name=name)
+
+
+@app.route("/vms/<int:vm_id>/resources")
+@login_required
+def vm_resources(vm_id):
+    """Przydział (i bieżące zużycie) RAM / CPU / dysku maszyny - odpytywane z dashboardu."""
+    vm = db.session.get(VMInstance, vm_id) or abort(404)
+    if not can_manage(vm) or not vm.libvirt_name:
+        abort(403)
+    try:
+        return jsonify(lv.vm_resources(vm.libvirt_name))
+    except lv.LibvirtError as exc:
+        return jsonify(error=str(exc)), 502
 
 
 @app.route("/vms/<int:vm_id>/power", methods=["POST"])

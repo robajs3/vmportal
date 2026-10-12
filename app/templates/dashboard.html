@@ -58,6 +58,8 @@
                   <button class="vm-btn" type="submit">Start</button>
                 </form>
               {% elif row.state == 'running' %}
+                <button class="vm-btn" type="button" data-res-toggle
+                        data-url="{{ url_for('vm_resources', vm_id=vm.id) }}">Zasoby</button>
                 <form method="post" action="{{ url_for('vm_power', vm_id=vm.id) }}">
                   <input type="hidden" name="action" value="shutdown">
                   <button class="vm-btn" type="submit">Zamknij</button>
@@ -81,9 +83,115 @@
               </form>
             {% endif %}
           </div>
+          <div class="vm-res" data-res-panel hidden></div>
         </section>
       {% endfor %}
     </div>
   </main>
+
+  <script>
+  (function () {
+    var POLL_MS = 3000;
+
+    function fmtMB(mb) { return mb >= 1024 ? (mb / 1024).toFixed(mb % 1024 ? 1 : 0) + ' GB' : Math.round(mb) + ' MB'; }
+    function fmtBytes(b) { return fmtMB(b / 1048576); }
+
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined) n.textContent = text;
+      return n;
+    }
+    function row(label, main, sub, pct) {
+      var r = el('div', 'vm-res-row');
+      var head = el('div', 'vm-res-head');
+      head.appendChild(el('span', 'vm-res-label', label));
+      head.appendChild(el('span', 'vm-res-main', main));
+      r.appendChild(head);
+      if (pct !== null && pct !== undefined) {
+        var track = el('div', 'vm-progress');
+        var fill = el('div', 'vm-progress-bar');
+        fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        track.appendChild(fill);
+        r.appendChild(track);
+      }
+      if (sub) r.appendChild(el('small', null, sub));
+      return r;
+    }
+
+    function render(panel, d, prev) {
+      panel.textContent = '';
+      if (d.state !== 'running') {
+        panel.appendChild(el('small', null, 'Maszyna nie jest uruchomiona (' + d.state + '). Odśwież stronę.'));
+        return;
+      }
+
+      // CPU: zużycie liczymy z różnicy czasu procesora między dwoma odczytami
+      var cpuPct = null;
+      if (prev && d.sampled_at > prev.sampled_at) {
+        var used = (d.cpu_time_ns - prev.cpu_time_ns) / 1e9;
+        cpuPct = used / ((d.sampled_at - prev.sampled_at) * d.vcpus) * 100;
+      }
+      panel.appendChild(row('CPU', d.vcpus + ' vCPU',
+        cpuPct === null ? 'mierzenie zużycia…' : 'zużycie: ' + cpuPct.toFixed(0) + '%', cpuPct));
+
+      var ramSub = [];
+      var ramPct = null;
+      if (d.ram_used_mb !== null) {
+        ramPct = d.ram_used_mb / d.ram_max_mb * 100;
+        ramSub.push('w systemie gościa: ' + fmtMB(d.ram_used_mb) + ' (' + ramPct.toFixed(0) + '%)');
+      } else {
+        ramSub.push('brak danych z gościa (wymaga sterownika virtio-balloon)');
+      }
+      if (d.ram_host_rss_mb !== null) ramSub.push('zajęte na hoście: ' + fmtMB(d.ram_host_rss_mb));
+      if (d.ram_current_mb !== d.ram_max_mb) ramSub.push('balloon: ' + fmtMB(d.ram_current_mb));
+      panel.appendChild(row('RAM', fmtMB(d.ram_max_mb) + ' przydzielone', ramSub.join(' · '), ramPct));
+
+      d.disks.forEach(function (disk) {
+        panel.appendChild(row('Dysk ' + disk.dev, fmtBytes(disk.capacity) + ' przydzielone',
+          'zajęte na hoście: ' + fmtBytes(disk.physical) + ' (dysk rośnie dynamicznie)',
+          disk.physical / disk.capacity * 100));
+      });
+      if (!d.disks.length) panel.appendChild(row('Dysk', 'brak danych', null, null));
+    }
+
+    function bind(btn) {
+      var card = btn.closest('.vm-card');
+      var panel = card.querySelector('[data-res-panel]');
+      var timer = null, prev = null;
+
+      function tick() {
+        fetch(btn.dataset.url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            if (!res.ok) throw new Error(res.j.error || 'błąd');
+            render(panel, res.j, prev);
+            prev = res.j;
+          })
+          .catch(function (e) {
+            panel.textContent = '';
+            panel.appendChild(el('small', null, 'Nie udało się pobrać danych: ' + e.message));
+          });
+      }
+      function stop() { clearInterval(timer); timer = null; prev = null; }
+
+      btn.addEventListener('click', function () {
+        if (panel.hidden) {
+          panel.hidden = false;
+          btn.textContent = 'Ukryj zasoby';
+          panel.textContent = 'Ładowanie…';
+          tick();
+          timer = setInterval(tick, POLL_MS);
+        } else {
+          panel.hidden = true;
+          btn.textContent = 'Zasoby';
+          stop();
+        }
+      });
+    }
+
+    document.querySelectorAll('[data-res-toggle]').forEach(bind);
+  })();
+  </script>
 </body>
 </html>

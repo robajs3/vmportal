@@ -1,0 +1,41 @@
+/* Style dla nowych widoków; neutralne kolory, działają na jasnym i ciemnym tle */
+.vm-wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+.vm-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.vm-header h1 { margin: 0; font-size: 1.6rem; }
+.vm-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vm-user { opacity: .7; margin-right: 4px; }
+
+.vm-btn { display: inline-block; padding: 8px 14px; border: 1px solid rgba(128,128,128,.5); border-radius: 8px;
+          background: transparent; color: inherit; font: inherit; cursor: pointer; text-decoration: none; }
+.vm-btn:hover { background: rgba(128,128,128,.15); }
+.vm-btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+.vm-btn-primary:hover { background: #1d4ed8; }
+.vm-btn-danger { border-color: #dc2626; color: #dc2626; }
+.vm-btn-danger:hover { background: rgba(220,38,38,.12); }
+
+.vm-flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; border: 1px solid; }
+.vm-flash-success { background: rgba(22,163,74,.12); border-color: #16a34a; }
+.vm-flash-error { background: rgba(220,38,38,.12); border-color: #dc2626; }
+
+.vm-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.vm-card { border: 1px solid rgba(128,128,128,.4); border-radius: 12px; padding: 16px; }
+.vm-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.vm-card h2 { margin: 0; font-size: 1.15rem; word-break: break-all; }
+.vm-desc { margin: 8px 0 0; opacity: .85; }
+.vm-specs { margin: 6px 0 0; font-size: .9rem; opacity: .7; }
+.vm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.vm-actions form { margin: 0; }
+
+.vm-badge { padding: 2px 10px; border-radius: 999px; font-size: .8rem; border: 1px solid rgba(128,128,128,.5); }
+.vm-badge-running { background: rgba(22,163,74,.18); border-color: #16a34a; }
+.vm-badge-stopped { background: rgba(128,128,128,.15); }
+.vm-badge-crashed { background: rgba(220,38,38,.18); border-color: #dc2626; }
+.vm-badge-paused, .vm-badge-suspended, .vm-badge-shutting-down { background: rgba(234,179,8,.18); border-color: #eab308; }
+
+.vm-form { display: flex; flex-direction: column; gap: 16px; max-width: 640px; }
+.vm-form label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+.vm-form small { font-weight: 400; opacity: .65; }
+.vm-form input, .vm-form select { padding: 9px 10px; border-radius: 8px; border: 1px solid rgba(128,128,128,.5);
+                                  background: transparent; color: inherit; font: inherit; }
+.vm-form select option { color: #000; }
+.vm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }

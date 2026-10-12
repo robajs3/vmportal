@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nowa maszyna wirtualna</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>Nowa maszyna wirtualna</h1>
+      <a class="vm-btn" href="{{ url_for('dashboard') }}">← Wróć</a>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="post" class="vm-form" autocomplete="off">
+      <label>Nazwa
+        <input type="text" name="name" value="{{ form.name }}" required
+               pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]" placeholder="np. ubuntu-test">
+        <small>3–32 znaki: małe litery, cyfry, myślniki.</small>
+      </label>
+
+      <label>Opis (opcjonalnie)
+        <input type="text" name="description" value="{{ form.description }}" maxlength="500">
+      </label>
+
+      <div class="vm-grid">
+        <label>vCPU
+          <input type="number" name="vcpus" value="{{ form.vcpus }}" min="1" max="{{ limits.vcpus }}" required>
+          <small>1–{{ limits.vcpus }}</small>
+        </label>
+        <label>RAM (MB)
+          <input type="number" name="ram_mb" value="{{ form.ram_mb }}" min="{{ min_ram }}" max="{{ limits.ram_mb }}" step="256" required>
+          <small>{{ min_ram }}–{{ limits.ram_mb }}</small>
+        </label>
+        <label>Dysk (GB)
+          <input type="number" name="disk_gb" value="{{ form.disk_gb }}" min="{{ min_disk }}" max="{{ limits.disk_gb }}" required>
+          <small>{{ min_disk }}–{{ limits.disk_gb }} (dysk rośnie dynamicznie)</small>
+        </label>
+      </div>
+
+      <div class="vm-grid">
+        <label>Typ systemu
+          <select name="os_type">
+            <option value="linux" {{ 'selected' if form.os_type == 'linux' }}>Linux (virtio)</option>
+            <option value="windows" {{ 'selected' if form.os_type == 'windows' }}>Windows (SATA / e1000e)</option>
+          </select>
+        </label>
+        <label>Obraz instalacyjny (ISO)
+          <select name="iso">
+            <option value="">— brak (pusty dysk) —</option>
+            {% for iso in isos %}
+              <option value="{{ iso }}" {{ 'selected' if form.iso == iso }}>{{ iso }}</option>
+            {% endfor %}
+          </select>
+          {% if not isos %}<small>Brak plików ISO w puli. Dodaj je na serwerze (patrz INSTALL.md).</small>{% endif %}
+        </label>
+      </div>
+
+      <button type="submit" class="vm-btn vm-btn-primary">Utwórz i uruchom</button>
+    </form>
+  </main>
+</body>
+</html>

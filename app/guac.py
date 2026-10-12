@@ -7,7 +7,7 @@ import requests
 
 INTERNAL_URL = os.environ.get("GUAC_INTERNAL_URL", "http://guacamole:8080/guacamole").rstrip("/")
 ADMIN_USER = os.environ.get("GUAC_ADMIN_USER", "guacadmin")
-ADMIN_PASSWORD = os.environ.get("GUAC_ADMIN_PASSWORD", "")
+ADMIN_PASSWORD = os.environ["GUAC_ADMIN_PASSWORD"]  # wymagane (.env)
 PUBLIC_URL = os.environ.get("GUACAMOLE_PUBLIC_URL", "/guacamole/")
 TIMEOUT = 10
 

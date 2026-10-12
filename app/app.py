@@ -9,6 +9,7 @@ from flask_login import (
 )
 from flask_bcrypt import Bcrypt
 from sqlalchemy import text
+from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 import guac
@@ -34,8 +35,32 @@ class PrefixMiddleware:
 app = Flask(__name__)
 app.wsgi_app = PrefixMiddleware(app.wsgi_app)
 
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change-me-in-production")
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
+
+def _require_env(name):
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Brak wymaganej zmiennej środowiskowej {name} (ustaw ją w .env).")
+    return value
+
+
+def _database_uri():
+    """DATABASE_URL, jeśli ustawione; w przeciwnym razie składane z DB_* (hasło jest
+    poprawnie cytowane, więc może zawierać znaki specjalne)."""
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return url
+    return URL.create(
+        "postgresql",
+        username=_require_env("DB_USER"),
+        password=_require_env("DB_PASSWORD"),
+        host=os.environ.get("DB_HOST", "postgres"),
+        port=int(os.environ.get("DB_PORT", "5432")),
+        database=_require_env("DB_NAME"),
+    ).render_as_string(hide_password=False)
+
+
+app.config["SECRET_KEY"] = _require_env("SECRET_KEY")
+app.config["SQLALCHEMY_DATABASE_URI"] = _database_uri()
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SESSION_COOKIE_PATH"] = "/"
 # Własne nazwy ciasteczek: appki na tym samym hoście (np. Koloseum) używają domyślnego

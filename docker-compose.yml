@@ -4,14 +4,19 @@ services:
     container_name: vmportal-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: pguser
-      POSTGRES_PASSWORD: USUNIETE
+      POSTGRES_USER: ${POSTGRES_USER:-pguser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Ustaw POSTGRES_PASSWORD w .env}
       POSTGRES_DB: postgres
+      # Używane tylko przez skrypty w db-init/ (przy pierwszym starcie z pustym pgdata)
+      APP_DB_USER: ${APP_DB_USER:-vmportal_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Ustaw APP_DB_PASSWORD w .env}
+      GUAC_ADMIN_USER: ${GUAC_ADMIN_USER:-guacadmin}
+      GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD:?Ustaw GUAC_ADMIN_PASSWORD w .env}
     volumes:
       - ./pgdata:/var/lib/postgresql/data
       - ./db-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pguser"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,8 +50,8 @@ services:
       GUACD_HOSTNAME: guacd
       POSTGRESQL_HOSTNAME: postgres
       POSTGRESQL_DATABASE: guacamole_db
-      POSTGRESQL_USERNAME: pguser
-      POSTGRESQL_PASSWORD: USUNIETE
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-pguser}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?Ustaw POSTGRES_PASSWORD w .env}
       # Logowanie przez nagłówek ustawiany przez nginx po weryfikacji w portalu
       # (konta i uprawnienia nadal siedzą w bazie Postgres).
       HEADER_ENABLED: "true"
@@ -62,19 +67,25 @@ services:
       postgres:
         condition: service_healthy
     group_add:
-      - "979"
+      - "${LIBVIRT_GID:-979}"
     volumes:
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
     environment:
-      SECRET_KEY: f8a3c1e9b2d74a6f91038e5c7b2a4d6e
-      DATABASE_URL: postgresql://vmportal_app:USUNIETE@postgres:5432/app_db
-      ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: USUNIETE
-      GUACAMOLE_PUBLIC_URL: /vmka1/guacamole/
-      GUAC_INTERNAL_URL: http://guacamole:8080/guacamole
+      SECRET_KEY: ${SECRET_KEY:?Ustaw SECRET_KEY w .env}
+      # Połączenie z bazą składane w aplikacji z osobnych zmiennych
+      # (dzięki temu hasło może zawierać znaki specjalne)
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${APP_DB_NAME:-app_db}
+      DB_USER: ${APP_DB_USER:-vmportal_app}
+      DB_PASSWORD: ${APP_DB_PASSWORD:?Ustaw APP_DB_PASSWORD w .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Ustaw ADMIN_PASSWORD w .env}
+      GUACAMOLE_PUBLIC_URL: ${GUACAMOLE_PUBLIC_URL:-/vmka1/guacamole/}
+      GUAC_INTERNAL_URL: ${GUAC_INTERNAL_URL:-http://guacamole:8080/guacamole}
       GUAC_ADMIN_USER: ${GUAC_ADMIN_USER:-guacadmin}
-      GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD}
-      VM_HOST: host.docker.internal
+      GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD:?Ustaw GUAC_ADMIN_PASSWORD w .env}
+      VM_HOST: ${VM_HOST:-host.docker.internal}
       # SSO (LoginHub) — SSO_SECRET musi być DOKŁADNIE tą samą wartością co w .env LoginHub.
       # hub-web to nazwa kontenera LoginHub w sieci sso_net.
       SSO_SECRET: ${SSO_SECRET:-}

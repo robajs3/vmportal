@@ -48,9 +48,9 @@ def _database_uri():
     poprawnie cytowane, więc może zawierać znaki specjalne)."""
     url = os.environ.get("DATABASE_URL")
     if url:
-        return url
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return URL.create(
-        "postgresql",
+        "postgresql+psycopg2",
         username=_require_env("DB_USER"),
         password=_require_env("DB_PASSWORD"),
         host=os.environ.get("DB_HOST", "postgres"),

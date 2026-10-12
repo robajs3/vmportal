@@ -47,6 +47,10 @@ services:
       POSTGRESQL_DATABASE: guacamole_db
       POSTGRESQL_USERNAME: pguser
       POSTGRESQL_PASSWORD: USUNIETE
+      # Logowanie przez nagłówek ustawiany przez nginx po weryfikacji w portalu
+      # (konta i uprawnienia nadal siedzą w bazie Postgres).
+      HEADER_ENABLED: "true"
+      HTTP_AUTH_HEADER: X-Guac-User
     networks:
       - vmportal-net
 

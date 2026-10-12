@@ -1,6 +1,7 @@
 """Klient REST API Guacamole: tworzenie/usuwanie połączeń VNC i nadawanie uprawnień."""
 import base64
 import os
+from urllib.parse import quote
 
 import requests
 
@@ -40,6 +41,50 @@ def _logout(token):
         pass
 
 
+def _ensure_user(ds, headers, username):
+    """Zakłada konto w Guacamole, jeśli go nie ma (losowe hasło — wejście idzie
+    przez nagłówek SSO z nginx, nie przez hasło). Błąd 'już istnieje' ignorujemy."""
+    if username == ADMIN_USER:
+        return
+    r = requests.get(
+        f"{INTERNAL_URL}/api/session/data/{ds}/users/{quote(username, safe='')}",
+        headers=headers, timeout=TIMEOUT,
+    )
+    if r.status_code == 200:
+        return
+    r = requests.post(
+        f"{INTERNAL_URL}/api/session/data/{ds}/users",
+        json={"username": username, "password": os.urandom(24).hex(), "attributes": {}},
+        headers=headers, timeout=TIMEOUT,
+    )
+    if r.status_code not in (200, 201):
+        raise GuacError(f"Nie udało się założyć użytkownika w Guacamole (HTTP {r.status_code}): {r.text[:200]}")
+
+
+def sync_user(username, conn_ids=()):
+    """Zapewnia konto użytkownika w Guacamole i nadaje mu READ do podanych połączeń
+    (idempotentne). Konto admina portalu (guacadmin) już istnieje i widzi wszystko."""
+    token, ds = _login()
+    headers = {"Guacamole-Token": token}
+    try:
+        _ensure_user(ds, headers, username)
+        ops = [
+            {"op": "add", "path": f"/connectionPermissions/{cid}", "value": "READ"}
+            for cid in conn_ids if cid
+        ]
+        if ops and username != ADMIN_USER:
+            r = requests.patch(
+                f"{INTERNAL_URL}/api/session/data/{ds}/users/{quote(username, safe='')}/permissions",
+                json=ops, headers=headers, timeout=TIMEOUT,
+            )
+            if r.status_code not in (200, 204):
+                raise GuacError(f"Nie nadano uprawnień w Guacamole (HTTP {r.status_code}): {r.text[:200]}")
+    except requests.RequestException as exc:
+        raise GuacError(f"Błąd komunikacji z Guacamole: {exc}") from exc
+    finally:
+        _logout(token)
+
+
 def create_connection(name, hostname, port, vnc_password, grant_users=()):
     """Tworzy połączenie VNC. Zwraca identyfikator połączenia (str)."""
     token, ds = _login()
@@ -68,12 +113,13 @@ def create_connection(name, hostname, port, vnc_password, grant_users=()):
         # Uprawnienia: błędy ignorujemy (np. użytkownik o takiej nazwie nie istnieje w Guacamole)
         for user in {u for u in grant_users if u}:
             try:
+                _ensure_user(ds, headers, user)
                 requests.patch(
-                    f"{INTERNAL_URL}/api/session/data/{ds}/users/{user}/permissions",
+                    f"{INTERNAL_URL}/api/session/data/{ds}/users/{quote(user, safe='')}/permissions",
                     json=[{"op": "add", "path": f"/connectionPermissions/{conn_id}", "value": "READ"}],
                     headers=headers, timeout=TIMEOUT,
                 )
-            except requests.RequestException:
+            except (requests.RequestException, GuacError):
                 pass
         return conn_id
     except requests.RequestException as exc:

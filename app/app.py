@@ -138,6 +138,14 @@ def _inject_helpers():
     return {"is_admin": is_admin}
 
 
+def guac_username(user):
+    """Konto w Guacamole dla danego usera portalu: admin wchodzi jako guacadmin,
+    reszta na konto o tej samej nazwie co w portalu."""
+    if user.username == os.environ.get("ADMIN_USERNAME"):
+        return guac.ADMIN_USER
+    return user.username
+
+
 def can_manage(vm):
     return is_admin() or (vm.owner_id is not None and vm.owner_id == current_user.id)
 
@@ -179,7 +187,8 @@ def _create_vmportal_user(hub_username: str):
 
 _PUBLIC_ENDPOINTS = {"static", "healthz"}
 # endpointy dostępne dla zalogowanego, ale jeszcze niezatwierdzonego usera
-_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login"}
+# guac_auth sam zwraca 401/403 (a nie redirect), bo woła go nginx przez auth_request
+_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "guac_auth"}
 
 
 @app.before_request
@@ -387,7 +396,7 @@ def new_vm():
             )
             conn_id = guac.create_connection(
                 form["name"], VM_HOST, created["vnc_port"], created["vnc_password"],
-                grant_users=GUAC_GRANT_USERS + [current_user.username],
+                grant_users=GUAC_GRANT_USERS + [guac_username(current_user)],
             )
             vm = VMInstance(
                 name=form["name"],
@@ -465,6 +474,37 @@ def vm_delete(vm_id):
         db.session.rollback()
         flash(f"Błąd libvirt: {exc}", "error")
     return redirect(url_for("dashboard"))
+
+
+# --- Guacamole SSO (nginx auth_request) ------------------------------------
+_guac_synced = set()  # konta już zsynchronizowane w tym procesie (żeby nie wołać REST przy każdym żądaniu)
+
+
+@app.route("/_guac_auth")
+def guac_auth():
+    """Wołane przez nginx (auth_request) przy KAŻDYM żądaniu do /guacamole/.
+    200 + X-Guac-User => nginx podaje ten nagłówek Guacamole (rozszerzenie header-auth)
+    i user wchodzi bez ekranu logowania. 401 => niezalogowany, 403 => brak zgody admina."""
+    if not current_user.is_authenticated:
+        return "", 401
+    if not has_access():
+        return "", 403
+
+    gname = guac_username(current_user)
+    if gname not in _guac_synced:
+        try:
+            owned = [
+                v.guac_connection_id
+                for v in VMInstance.query.filter_by(owner_id=current_user.id).all()
+                if v.guac_connection_id
+            ]
+            guac.sync_user(gname, owned)
+        except guac.GuacError as exc:
+            app.logger.error("Synchronizacja konta Guacamole nie powiodła się: %s", exc)
+            return "", 503
+        _guac_synced.add(gname)
+
+    return "", 200, {"X-Guac-User": gname}
 
 
 @app.route("/healthz")

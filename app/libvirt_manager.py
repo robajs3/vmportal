@@ -2,6 +2,7 @@
 import os
 import re
 import secrets
+import time
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from xml.sax.saxutils import escape
@@ -60,6 +61,150 @@ def list_isos():
             return sorted(v.name() for v in pool.listAllVolumes(0) if v.name().lower().endswith(".iso"))
         except libvirt.libvirtError:
             return []
+
+
+# sygnatura w obrazie ISO: "CD001" (ISO 9660) lub "BEA01" (czysty UDF) pod offsetem 0x8001
+_ISO_SIG_OFFSET = 0x8001
+_ISO_SIGNATURES = (b"CD001", b"BEA01")
+
+
+def _read_fill(src, n):
+    """Czyta dokładnie n bajtów (lub mniej, jeśli strumień się skończy)."""
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = src.read(n - len(buf))
+        if not chunk:
+            break
+        buf += chunk
+    return bytes(buf)
+
+
+class _HeadThenStream:
+    """Oddaje najpierw już przeczytany początek pliku, potem resztę strumienia
+    i zlicza, ile bajtów poszło do libvirt."""
+
+    def __init__(self, head, rest):
+        self.head = head
+        self.rest = rest
+        self.sent = 0
+
+    def read(self, n):
+        if self.head:
+            out, self.head = self.head[:n], self.head[n:]
+        else:
+            out = _read_fill(self.rest, n)
+        self.sent += len(out)
+        return out
+
+
+def upload_iso(name, src, size):
+    """Wgrywa obraz ISO do puli ISO_POOL, strumieniując go prosto z `src` (obiekt z .read())
+    przez protokół libvirt - kontener nie potrzebuje dostępu do katalogu z ISO.
+    `size` to dokładny rozmiar pliku w bajtach (Content-Length)."""
+    if not name.lower().endswith(".iso"):
+        raise LibvirtError("Plik musi mieć rozszerzenie .iso.")
+
+    # szybka walidacja zawartości, zanim cokolwiek utworzymy w puli
+    head = _read_fill(src, min(size, 64 * 1024))
+    sig = head[_ISO_SIG_OFFSET:_ISO_SIG_OFFSET + 5]
+    if sig not in _ISO_SIGNATURES:
+        raise LibvirtError("Ten plik nie wygląda na obraz ISO (brak sygnatury ISO 9660/UDF).")
+
+    with connection() as conn:
+        try:
+            pool = conn.storagePoolLookupByName(ISO_POOL)
+        except libvirt.libvirtError as exc:
+            raise LibvirtError(f"Brak puli ISO „{ISO_POOL}”: {exc}") from exc
+        if not pool.isActive():
+            raise LibvirtError(f"Pula ISO „{ISO_POOL}” jest nieaktywna.")
+        pool.refresh(0)
+
+        if name in {v.name() for v in pool.listAllVolumes(0)}:
+            raise LibvirtError(
+                f"Plik „{name}” już istnieje w puli ISO - wybierz go z listy albo zmień nazwę pliku."
+            )
+        available = pool.info()[3]
+        if size > available:
+            raise LibvirtError(
+                f"Za mało miejsca w puli ISO (wolne {available // 1048576} MB, plik ma {size // 1048576} MB)."
+            )
+
+        vol = pool.createXML(
+            f"<volume><name>{escape(name)}</name>"
+            f"<capacity unit='bytes'>{int(size)}</capacity>"
+            "<target><format type='raw'/></target></volume>",
+            0,
+        )
+        reader = _HeadThenStream(head, src)
+        stream = conn.newStream(0)
+        try:
+            vol.upload(stream, 0, size, 0)
+            stream.sendAll(lambda _st, nbytes, _op: reader.read(nbytes), None)
+            stream.finish()
+            if reader.sent != size:
+                raise LibvirtError("Przesyłanie zostało przerwane - plik jest niekompletny.")
+        except Exception:
+            # nie zostawiamy w puli uciętych plików
+            try:
+                stream.abort()
+            except libvirt.libvirtError:
+                pass
+            try:
+                vol.delete(0)
+            except libvirt.libvirtError:
+                pass
+            raise
+        pool.refresh(0)
+
+
+def vm_resources(name):
+    """Przydział zasobów maszyny + (dla działającej) bieżące zużycie.
+    Dane czytane na żywo z libvirt, więc działa też dla maszyn dodanych ręcznie."""
+    with connection() as conn:
+        dom = conn.lookupByName(name)
+        state, max_kib, cur_kib, vcpus, cpu_ns = dom.info()
+        active = bool(dom.isActive())
+
+        data = {
+            "state": STATE_NAMES.get(state, "unknown"),
+            "vcpus": vcpus,
+            "ram_max_mb": max_kib // 1024,
+            "ram_current_mb": cur_kib // 1024,
+            "ram_used_mb": None,       # zajęte w systemie gościa (wymaga virtio-balloon)
+            "ram_host_rss_mb": None,   # ile pamięci hosta faktycznie zajmuje proces QEMU
+            "cpu_time_ns": cpu_ns,
+            "sampled_at": time.time(),
+            "disks": [],
+        }
+
+        if active:
+            try:
+                st = dom.memoryStats()
+                avail = st.get("available")
+                free = st.get("usable", st.get("unused"))
+                if avail and free is not None:
+                    data["ram_used_mb"] = max(avail - free, 0) // 1024
+                if st.get("rss"):
+                    data["ram_host_rss_mb"] = st["rss"] // 1024
+            except libvirt.libvirtError:
+                pass
+
+        root = ET.fromstring(dom.XMLDesc(0))
+        for disk in root.findall("./devices/disk[@device='disk']"):
+            target = disk.find("target")
+            source = disk.find("source")
+            if target is None or source is None:
+                continue
+            dev = target.get("dev")
+            path = source.get("file") or source.get("dev")
+            if not dev or not path:
+                continue
+            try:
+                capacity, _allocation, physical = dom.blockInfo(path, 0)
+            except libvirt.libvirtError:
+                continue
+            data["disks"].append({"dev": dev, "capacity": capacity, "physical": physical})
+        return data
 
 
 def _used_vnc_ports(conn):

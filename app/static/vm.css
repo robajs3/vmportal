@@ -46,3 +46,16 @@
 .vm-table th, .vm-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(128,128,128,.3); vertical-align: middle; }
 .vm-table th { font-size: .85rem; opacity: .7; font-weight: 600; }
 .vm-table form { margin: 0; }
+
+/* pasek postępu (upload ISO) i panel zasobów maszyny */
+.vm-progress { height: 8px; border-radius: 999px; background: rgba(128,128,128,.25); overflow: hidden; margin-top: 6px; }
+.vm-progress-bar { height: 100%; width: 0; background: #2563eb; transition: width .3s; }
+.vm-upload { display: flex; flex-direction: column; gap: 4px; }
+.vm-upload-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vm-upload-row small { flex: 1 1 240px; opacity: .65; }
+.vm-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.vm-res { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(128,128,128,.3); display: flex; flex-direction: column; gap: 12px; }
+.vm-res-head { display: flex; justify-content: space-between; gap: 8px; font-size: .9rem; }
+.vm-res-label { font-weight: 600; }
+.vm-res small { display: block; margin-top: 4px; opacity: .65; }

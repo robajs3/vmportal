@@ -25,6 +25,8 @@ services:
     volumes:
       - ./drive:/drive:rw
       - ./record:/record:rw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - vmportal-net
 
@@ -53,12 +55,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    group_add:
+      - "979"
+    volumes:
+      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
     environment:
       SECRET_KEY: f8a3c1e9b2d74a6f91038e5c7b2a4d6e
       DATABASE_URL: postgresql://vmportal_app:USUNIETE@postgres:5432/app_db
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: USUNIETE
       GUACAMOLE_PUBLIC_URL: /vmka1/guacamole/
+      GUAC_INTERNAL_URL: http://guacamole:8080/guacamole
+      GUAC_ADMIN_USER: ${GUAC_ADMIN_USER:-guacadmin}
+      GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD}
+      VM_HOST: host.docker.internal
     networks:
       - vmportal-net
 

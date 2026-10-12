@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Logowanie — VM Portal</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="auth-box">
+        <h1>VM Portal</h1>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        <form method="POST" action="{{ url_for('login') }}">
+            <label for="username">Nazwa użytkownika</label>
+            <input type="text" id="username" name="username" required autofocus>
+
+            <label for="password">Hasło</label>
+            <input type="password" id="password" name="password" required>
+
+            <button type="submit">Zaloguj</button>
+        </form>
+    </div>
+</body>
+</html>

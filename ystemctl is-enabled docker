@@ -1,0 +1,24 @@
+[0;1;32m●[0m docker.service - Docker Application Container Engine
+     Loaded: loaded (]8;;file://robajs-serwer-dell/usr/lib/systemd/system/docker.service\/usr/lib/systemd/system/docker.service]8;;\; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (running)[0m since Mon 2026-08-03 16:50:56 CEST; 5h 16min ago
+ Invocation: 8fc07069f1ac4a458da6b45deea954b2
+TriggeredBy: [0;1;32m●[0m docker.socket
+       Docs: ]8;;https://docs.docker.com\https://docs.docker.com]8;;\
+   Main PID: 2160 (dockerd)
+      Tasks: 29
+     Memory: 137M (peak: 140.3M)
+        CPU: 38.101s
+     CGroup: /system.slice/docker.service
+             ├─[0;38:5:245m2160 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock[0m
+             └─[0;38:5:245m3046 /usr/bin/docker-proxy -proto tcp -host-ip 127.0.0.1 -host-port 8001 -container-ip 172.18.0.4 -container-port 80 -use-listen-fd[0m
+
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.190105544+02:00" level=info msg="sbJoin: gwep4 ''->'ba66641deb51', gwep6 ''->''" eid=ba66641deb51 ep=vmportal-nginx net=vm-portal_vmportal-net nid=7a4342a05140
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.231018750+02:00" level=info msg="sbJoin: gwep4 ''->'3cb3c8c60171', gwep6 ''->''" eid=3cb3c8c60171 ep=vmportal-postgres net=vm-portal_vmportal-net nid=7a4342a05140
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.254571325+02:00" level=info msg="sbJoin: gwep4 ''->'246ecfd20b73', gwep6 ''->''" eid=246ecfd20b73 ep=vmportal-flask net=vm-portal_vmportal-net nid=7a4342a05140
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.279409999+02:00" level=info msg="Loading containers: done."
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.294288104+02:00" level=info msg="Docker daemon" commit=4b5cb71 containerd-snapshotter=true storage-driver=overlayfs version=29.7.0
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.295799639+02:00" level=info msg="Initializing buildkit"
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.722473308+02:00" level=info msg="Completed buildkit initialization"
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.727759046+02:00" level=info msg="Daemon has completed initialization"
+Aug 03 16:50:56 robajs-serwer-dell dockerd[2160]: time="2026-08-03T16:50:56.727810417+02:00" level=info msg="API listen on /run/docker.sock"
+Aug 03 16:50:56 robajs-serwer-dell systemd[1]: Started docker.service - Docker Application Container Engine.

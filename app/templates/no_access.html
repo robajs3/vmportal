@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brak dostępu — VM Portal</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="auth-box">
+    <h1>Brak dostępu</h1>
+    <p>Jesteś zalogowany jako <strong>{{ user.username }}</strong>, ale to konto nie ma jeszcze
+       dostępu do maszyn wirtualnych.</p>
+    <p>Poproś administratora o zatwierdzenie konta, a potem odśwież tę stronę.</p>
+    <p><a href="{{ url_for('logout') }}">Wyloguj</a></p>
+  </div>
+</body>
+</html>

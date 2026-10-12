@@ -17,6 +17,8 @@ services:
       retries: 5
     networks:
       - vmportal-net
+      # LoginHub (panel admina) czyta stąd listę userów do łączenia kont
+      - sso_net
 
   guacd:
     image: guacamole/guacd:latest
@@ -69,8 +71,13 @@ services:
       GUAC_ADMIN_USER: ${GUAC_ADMIN_USER:-guacadmin}
       GUAC_ADMIN_PASSWORD: ${GUAC_ADMIN_PASSWORD}
       VM_HOST: host.docker.internal
+      # SSO (LoginHub) — SSO_SECRET musi być DOKŁADNIE tą samą wartością co w .env LoginHub.
+      # hub-web to nazwa kontenera LoginHub w sieci sso_net.
+      SSO_SECRET: ${SSO_SECRET:-}
+      HUB_INTERNAL_URL: ${HUB_INTERNAL_URL:-http://hub-web:8000}
     networks:
       - vmportal-net
+      - sso_net
 
   nginx:
     image: nginx:alpine
@@ -89,3 +96,6 @@ services:
 networks:
   vmportal-net:
     driver: bridge
+  # Wspólna sieć z LoginHub: docker network create sso_net (raz)
+  sso_net:
+    external: true

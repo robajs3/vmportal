@@ -1,34 +1,88 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <meta charset="UTF-8">
-    <title>Panel — VM Portal</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel maszyn wirtualnych</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
 </head>
 <body>
-    <div class="topbar">
-        <span>Zalogowano jako: <strong>{{ user.username }}</strong></span>
-        <a href="{{ url_for('logout') }}">Wyloguj</a>
-    </div>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>Maszyny wirtualne</h1>
+      <div class="vm-header-actions">
+        <span class="vm-user">{{ user.username }}</span>
+        <a class="vm-btn vm-btn-primary" href="{{ url_for('new_vm') }}">+ Nowa maszyna</a>
+        <a class="vm-btn" href="{{ url_for('logout') }}">Wyloguj</a>
+      </div>
+    </header>
 
-    <div class="dashboard">
-        <h1>Twoje maszyny wirtualne</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
 
-        {% if vms|length == 0 %}
-            <p>Brak skonfigurowanych maszyn wirtualnych.</p>
-        {% else %}
-            <div class="vm-grid">
-                {% for vm in vms %}
-                <div class="vm-card">
-                    <h2>{{ vm.name }}</h2>
-                    <p>{{ vm.description or "" }}</p>
-                    <a class="connect-btn" href="{{ vm.guacamole_url }}" target="_blank" rel="noopener">
-                        Połącz →
-                    </a>
-                </div>
-                {% endfor %}
-            </div>
-        {% endif %}
+    {% if libvirt_error %}
+      <div class="vm-flash vm-flash-error">Libvirt niedostępny – stany maszyn nie są aktualne: {{ libvirt_error }}</div>
+    {% endif %}
+
+    {% if not rows %}
+      <p>Brak maszyn. Utwórz pierwszą przyciskiem „Nowa maszyna”.</p>
+    {% endif %}
+
+    <div class="vm-list">
+      {% for row in rows %}
+        {% set vm = row.vm %}
+        <section class="vm-card">
+          <div class="vm-card-head">
+            <h2>{{ vm.name }}</h2>
+            {% if row.state %}
+              <span class="vm-badge vm-badge-{{ row.state }}">{{ row.state }}</span>
+            {% endif %}
+          </div>
+          {% if vm.description %}<p class="vm-desc">{{ vm.description }}</p>{% endif %}
+          {% if vm.vcpus %}
+            <p class="vm-specs">{{ vm.vcpus }} vCPU · {{ vm.ram_mb }} MB RAM · {{ vm.disk_gb }} GB dysk</p>
+          {% endif %}
+
+          <div class="vm-actions">
+            <a class="vm-btn vm-btn-primary" href="{{ vm.guacamole_url }}" target="_blank" rel="noopener">Otwórz konsolę</a>
+
+            {% if row.can_manage and vm.libvirt_name %}
+              {% if row.state == 'stopped' or row.state == 'crashed' %}
+                <form method="post" action="{{ url_for('vm_power', vm_id=vm.id) }}">
+                  <input type="hidden" name="action" value="start">
+                  <button class="vm-btn" type="submit">Start</button>
+                </form>
+              {% elif row.state == 'running' %}
+                <form method="post" action="{{ url_for('vm_power', vm_id=vm.id) }}">
+                  <input type="hidden" name="action" value="shutdown">
+                  <button class="vm-btn" type="submit">Zamknij</button>
+                </form>
+                <form method="post" action="{{ url_for('vm_power', vm_id=vm.id) }}">
+                  <input type="hidden" name="action" value="reboot">
+                  <button class="vm-btn" type="submit">Restart</button>
+                </form>
+                <form method="post" action="{{ url_for('vm_power', vm_id=vm.id) }}"
+                      onsubmit="return confirm('Wymusić wyłączenie (jak wyjęcie wtyczki)?');">
+                  <input type="hidden" name="action" value="destroy">
+                  <button class="vm-btn" type="submit">Wymuś wyłączenie</button>
+                </form>
+              {% endif %}
+            {% endif %}
+
+            {% if row.can_manage %}
+              <form method="post" action="{{ url_for('vm_delete', vm_id=vm.id) }}"
+                    onsubmit="return confirm('Usunąć „{{ vm.name }}”{% if vm.managed %} wraz z dyskiem{% endif %}? Tej operacji nie można cofnąć.');">
+                <button class="vm-btn vm-btn-danger" type="submit">Usuń</button>
+              </form>
+            {% endif %}
+          </div>
+        </section>
+      {% endfor %}
     </div>
+  </main>
 </body>
 </html>

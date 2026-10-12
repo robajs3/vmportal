@@ -1,6 +1,7 @@
 import os
+import secrets
 import time
-from flask import Flask, render_template, redirect, url_for, request, flash, abort
+from flask import Flask, render_template, redirect, url_for, request, flash, abort, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -8,10 +9,11 @@ from flask_login import (
 )
 from flask_bcrypt import Bcrypt
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 import guac
 import libvirt_manager as lv
+import sso_client
 
 
 class PrefixMiddleware:
@@ -36,6 +38,10 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change-me-in-production
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ["DATABASE_URL"]
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SESSION_COOKIE_PATH"] = "/"
+# Własne nazwy ciasteczek: appki na tym samym hoście (np. Koloseum) używają domyślnego
+# "session" z Path=/ i nadpisywałyby sobie nawzajem sesje (różne SECRET_KEY).
+app.config["SESSION_COOKIE_NAME"] = "vmportal_session"
+app.config["REMEMBER_COOKIE_NAME"] = "vmportal_remember"
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 
@@ -65,6 +71,10 @@ class User(db.Model, UserMixin):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
+    # Czy konto ma dostęp do portalu. Nowe konta (w tym zakładane przez SSO) startują
+    # jako FALSE, dopóki admin ich nie zatwierdzi w /admin. Admin (ADMIN_USERNAME)
+    # ma dostęp zawsze, niezależnie od tej flagi.
+    is_allowed = db.Column(db.Boolean, nullable=False, default=False, server_default="false")
 
     def set_password(self, raw_password):
         self.password_hash = bcrypt.generate_password_hash(raw_password).decode("utf-8")
@@ -101,6 +111,10 @@ MIGRATIONS = [
     "ALTER TABLE vm_instances ADD COLUMN IF NOT EXISTS guac_connection_id VARCHAR(50)",
     "ALTER TABLE vm_instances ADD COLUMN IF NOT EXISTS managed BOOLEAN NOT NULL DEFAULT FALSE",
     # istniejąca maszyna z seeda: umożliwia podgląd stanu / start / stop
+    # dostęp do portalu: istniejące konta zostają dopuszczone (DEFAULT TRUE przy dodawaniu
+    # kolumny), a nowe domyślnie nie mają dostępu (DEFAULT FALSE ustawiany zaraz potem)
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_allowed BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE users ALTER COLUMN is_allowed SET DEFAULT FALSE",
     "UPDATE vm_instances SET libvirt_name = name WHERE libvirt_name IS NULL AND name = 'xubuntu-vm1'",
 ]
 
@@ -114,6 +128,16 @@ def is_admin():
     return current_user.is_authenticated and current_user.username == os.environ.get("ADMIN_USERNAME")
 
 
+def has_access():
+    """Czy zalogowany user może korzystać z portalu (admin zawsze, reszta wg flagi)."""
+    return current_user.is_authenticated and (is_admin() or current_user.is_allowed)
+
+
+@app.context_processor
+def _inject_helpers():
+    return {"is_admin": is_admin}
+
+
 def can_manage(vm):
     return is_admin() or (vm.owner_id is not None and vm.owner_id == current_user.id)
 
@@ -125,11 +149,79 @@ def _to_int(value):
         return None
 
 
+# --- SSO (LoginHub) -------------------------------------------------------
+def _create_vmportal_user(hub_username: str):
+    """Zakłada konto w VM Portal dla usera z LoginHub, który nie miał tu jeszcze konta.
+    Wołane przez sso_client.resolve_or_create_local_user przy pierwszej wizycie.
+
+    Konto powstaje BEZ dostępu (is_allowed=False) — admin musi je zatwierdzić w /admin.
+    Hasło jest losowe i nieznane nikomu, logowanie idzie przez SSO.
+    get-or-create po username, żeby ponowne wywołanie nie tworzyło duplikatu.
+    """
+    username = hub_username[:80]
+    existing = User.query.filter_by(username=username).first()
+    if existing:
+        return existing.id, existing.username
+
+    user = User(username=username, is_allowed=False)
+    user.set_password(secrets.token_urlsafe(24))
+    db.session.add(user)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # wyścig z drugim workerem gunicorna — konto już jest
+        db.session.rollback()
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            raise
+    return user.id, user.username
+
+
+_PUBLIC_ENDPOINTS = {"static", "healthz"}
+# endpointy dostępne dla zalogowanego, ale jeszcze niezatwierdzonego usera
+_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login"}
+
+
+@app.before_request
+def _sso_autologin():
+    if request.endpoint in _PUBLIC_ENDPOINTS or current_user.is_authenticated:
+        return
+    local_id = sso_client.resolve_or_create_local_user(
+        app_slug="vmportal", create_user=_create_vmportal_user
+    )
+    if local_id:
+        user = db.session.get(User, local_id)
+        if user:
+            login_user(user)
+
+
+@app.before_request
+def _require_access():
+    """Domyślnie zamknięte: zalogowany user bez zgody admina widzi tylko /no-access."""
+    if request.endpoint in _NO_ACCESS_ENDPOINTS or not current_user.is_authenticated:
+        return
+    if not has_access():
+        return redirect(url_for("no_access"))
+
+
+@login_manager.unauthorized_handler
+def _unauthorized():
+    # PrefixMiddleware wpisuje prefiks (/vmka1) do SCRIPT_NAME, a nie do request.path —
+    # doklejamy go ręcznie, inaczej LoginHub odeśle usera poza appkę.
+    return redirect(sso_client.login_url(request.script_root + request.path))
+
+
 @app.route("/", methods=["GET"])
 def index():
-    if current_user.is_authenticated:
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/no-access")
+@login_required
+def no_access():
+    if has_access():
         return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
+    return render_template("no_access.html", user=current_user)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -148,14 +240,68 @@ def login():
 
         flash("Nieprawidłowa nazwa użytkownika lub hasło.", "error")
 
-    return render_template("login.html")
+    return render_template(
+        "login.html", hub_login_url=sso_client.login_url(url_for("dashboard"))
+    )
 
 
 @app.route("/logout")
 @login_required
 def logout():
+    # Globalne wylogowanie: czyścimy ciasteczko SSO i wracamy na ekran logowania LoginHub.
+    # Bez tego sso_session nadal byłoby ważne i _sso_autologin zalogowałby usera z powrotem.
+    response = make_response(redirect(sso_client.login_url(url_for("dashboard"))))
+    sso_client.clear_sso_cookie(response)
     logout_user()
-    return redirect(url_for("login"))
+    return response
+
+
+# --- Panel admina: kto może korzystać z portalu ----------------------------
+@app.route("/admin")
+@login_required
+def admin_panel():
+    if not is_admin():
+        abort(403)
+    users = User.query.order_by(User.is_allowed.asc(), User.username).all()
+    vm_counts = dict(
+        db.session.query(VMInstance.owner_id, db.func.count(VMInstance.id))
+        .filter(VMInstance.owner_id.isnot(None))
+        .group_by(VMInstance.owner_id)
+        .all()
+    )
+    admin_name = os.environ.get("ADMIN_USERNAME")
+    rows = [
+        {
+            "user": u,
+            "is_admin": u.username == admin_name,
+            "allowed": u.username == admin_name or u.is_allowed,
+            "vm_count": vm_counts.get(u.id, 0),
+        }
+        for u in users
+    ]
+    pending = sum(1 for r in rows if not r["allowed"])
+    return render_template("admin.html", rows=rows, pending=pending, user=current_user)
+
+
+@app.route("/admin/users/<int:user_id>/access", methods=["POST"])
+@login_required
+def admin_set_access(user_id):
+    if not is_admin():
+        abort(403)
+    target = db.session.get(User, user_id) or abort(404)
+    action = request.form.get("action", "")
+    if action not in ("grant", "revoke"):
+        abort(400)
+    if target.username == os.environ.get("ADMIN_USERNAME"):
+        flash("Konto administratora ma dostęp zawsze.", "error")
+        return redirect(url_for("admin_panel"))
+    target.is_allowed = action == "grant"
+    db.session.commit()
+    flash(
+        f"Użytkownik „{target.username}” {'ma teraz dostęp' if target.is_allowed else 'nie ma już dostępu'} do portalu.",
+        "success",
+    )
+    return redirect(url_for("admin_panel"))
 
 
 @app.route("/dashboard")

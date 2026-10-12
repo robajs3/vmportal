@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel admina — VM Portal</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>Dostęp do portalu</h1>
+      <div class="vm-header-actions">
+        <span class="vm-user">{{ user.username }}</span>
+        <a class="vm-btn" href="{{ url_for('dashboard') }}">← Maszyny</a>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% if pending %}
+      <div class="vm-flash vm-flash-warn">Oczekujące na zatwierdzenie: {{ pending }}</div>
+    {% endif %}
+
+    <p class="vm-desc">Tylko zatwierdzeni użytkownicy widzą maszyny i mogą z nich korzystać.
+      Nowe konta (np. założone przez logowanie z LoginHub) czekają tu na Twoją zgodę.</p>
+
+    <div class="vm-table-wrap">
+      <table class="vm-table">
+        <thead>
+          <tr><th>Użytkownik</th><th>Utworzony</th><th>Maszyny</th><th>Dostęp</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td>{{ r.user.username }}{% if r.is_admin %} <small>(admin)</small>{% endif %}</td>
+              <td>{{ r.user.created_at.strftime('%Y-%m-%d') if r.user.created_at else '—' }}</td>
+              <td>{{ r.vm_count }}</td>
+              <td>
+                {% if r.allowed %}
+                  <span class="vm-badge vm-badge-running">dozwolony</span>
+                {% else %}
+                  <span class="vm-badge vm-badge-paused">oczekuje</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if not r.is_admin %}
+                  <form method="post" action="{{ url_for('admin_set_access', user_id=r.user.id) }}">
+                    {% if r.allowed %}
+                      <input type="hidden" name="action" value="revoke">
+                      <button class="vm-btn vm-btn-danger" type="submit">Odbierz dostęp</button>
+                    {% else %}
+                      <input type="hidden" name="action" value="grant">
+                      <button class="vm-btn vm-btn-primary" type="submit">Zatwierdź</button>
+                    {% endif %}
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

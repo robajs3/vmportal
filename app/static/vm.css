@@ -39,3 +39,10 @@
                                   background: transparent; color: inherit; font: inherit; }
 .vm-form select option { color: #000; }
 .vm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+
+.vm-flash-warn { background: rgba(234,179,8,.15); border-color: #eab308; }
+.vm-table-wrap { overflow-x: auto; margin-top: 16px; }
+.vm-table { width: 100%; border-collapse: collapse; }
+.vm-table th, .vm-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(128,128,128,.3); vertical-align: middle; }
+.vm-table th { font-size: .85rem; opacity: .7; font-weight: 600; }
+.vm-table form { margin: 0; }

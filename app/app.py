@@ -399,7 +399,7 @@ def new_vm():
             errors.append(f"RAM: od {MIN_RAM_MB} do {LIMITS['ram_mb']} MB.")
         if disk_gb is None or not MIN_DISK_GB <= disk_gb <= LIMITS["disk_gb"]:
             errors.append(f"Dysk: od {MIN_DISK_GB} do {LIMITS['disk_gb']} GB.")
-        if form["os_type"] not in ("linux", "windows"):
+        if form["os_type"] not in lv.OS_PROFILES:
             errors.append("Nieprawidłowy typ systemu.")
         if form["iso"] and form["iso"] not in isos:
             errors.append("Wybrany obraz ISO nie istnieje.")

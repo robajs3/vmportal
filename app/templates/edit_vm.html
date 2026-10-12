@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zasoby maszyny {{ vm.name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>Zasoby: {{ vm.name }}</h1>
+      <a class="vm-btn" href="{{ url_for('dashboard') }}">← Wróć</a>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="post" class="vm-form" autocomplete="off">
+      <div class="vm-grid">
+        <label>vCPU
+          <input type="number" name="vcpus" value="{{ form.vcpus }}" min="1" max="{{ limits.vcpus }}" required>
+          <small>1–{{ limits.vcpus }}</small>
+        </label>
+        <label>RAM (MB)
+          <input type="number" name="ram_mb" value="{{ form.ram_mb }}" min="{{ min_ram }}" max="{{ limits.ram_mb }}" step="256" required>
+          <small>{{ min_ram }}–{{ limits.ram_mb }}</small>
+        </label>
+        {% if has_disk %}
+        <label>Dysk (GB)
+          <input type="number" name="disk_gb" value="{{ form.disk_gb }}" min="{{ min_disk }}" max="{{ [limits.disk_gb, min_disk]|max }}" required>
+          <small>tylko powiększanie (min. {{ min_disk }}); partycję w systemie trzeba potem rozszerzyć</small>
+        </label>
+        {% endif %}
+      </div>
+
+      <small>Zmiany zadziałają po następnym uruchomieniu maszyny.</small>
+      <button type="submit" class="vm-btn vm-btn-primary">Zapisz</button>
+    </form>
+  </main>
+</body>
+</html>

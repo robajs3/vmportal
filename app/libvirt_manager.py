@@ -207,6 +207,68 @@ def vm_resources(name):
         return data
 
 
+GIB = 1024 ** 3
+
+
+def _primary_disk_path(dom):
+    root = ET.fromstring(dom.XMLDesc(0))
+    for src in root.findall("./devices/disk[@device='disk']/source"):
+        path = src.get("file") or src.get("dev")
+        if path:
+            return path
+    return None
+
+
+def update_vm_resources(name, vcpus=None, ram_mb=None, disk_gb=None):
+    """Zmienia przydział zasobów WYŁĄCZONEJ maszyny (konfiguracja trwała).
+    None = bez zmiany. Dysk można tylko powiększyć (pierwszy dysk maszyny)."""
+    with connection() as conn:
+        dom = conn.lookupByName(name)
+        if dom.isActive():
+            raise LibvirtError("Zasoby można zmieniać tylko przy wyłączonej maszynie.")
+
+        # walidacja dysku przed jakąkolwiek zmianą (resize jest nieodwracalny)
+        vol = None
+        if disk_gb is not None:
+            path = _primary_disk_path(dom)
+            if not path:
+                raise LibvirtError("Nie znaleziono dysku maszyny.")
+            try:
+                vol = conn.storageVolLookupByPath(path)
+            except libvirt.libvirtError as exc:
+                raise LibvirtError(
+                    "Dysk tej maszyny nie należy do żadnej puli libvirt - nie można go powiększyć z portalu."
+                ) from exc
+            current_gb = -(-vol.info()[1] // GIB)  # w górę
+            if disk_gb < current_gb:
+                raise LibvirtError(f"Dysku nie można zmniejszyć (obecnie {current_gb} GB), tylko powiększyć.")
+            if disk_gb == current_gb:
+                vol = None
+
+        cfg = libvirt.VIR_DOMAIN_AFFECT_CONFIG
+
+        if ram_mb is not None:
+            kib = int(ram_mb) * 1024
+            if kib >= dom.maxMemory():
+                dom.setMemoryFlags(kib, cfg | libvirt.VIR_DOMAIN_MEM_MAXIMUM)  # najpierw limit...
+                dom.setMemoryFlags(kib, cfg)                                    # ...potem bieżąca
+            else:
+                dom.setMemoryFlags(kib, cfg)
+                dom.setMemoryFlags(kib, cfg | libvirt.VIR_DOMAIN_MEM_MAXIMUM)
+
+        if vcpus is not None:
+            vcpus = int(vcpus)
+            if vcpus >= dom.info()[3]:
+                dom.setVcpusFlags(vcpus, cfg | libvirt.VIR_DOMAIN_VCPU_MAXIMUM)
+                dom.setVcpusFlags(vcpus, cfg)
+            else:
+                dom.setVcpusFlags(vcpus, cfg)
+                dom.setVcpusFlags(vcpus, cfg | libvirt.VIR_DOMAIN_VCPU_MAXIMUM)
+
+        if vol is not None:
+            vol.resize(int(disk_gb) * GIB, 0)
+
+
 def _used_vnc_ports(conn):
     ports = set()
     for dom in conn.listAllDomains(0):

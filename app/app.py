@@ -521,6 +521,72 @@ def vm_power(vm_id):
     return redirect(url_for("dashboard"))
 
 
+@app.route("/vms/<int:vm_id>/edit", methods=["GET", "POST"])
+@login_required
+def vm_edit(vm_id):
+    """Zmiana vCPU / RAM / dysku maszyny - tylko gdy jest wyłączona."""
+    vm = db.session.get(VMInstance, vm_id) or abort(404)
+    if not can_manage(vm) or not vm.libvirt_name:
+        abort(403)
+
+    try:
+        cur = lv.vm_resources(vm.libvirt_name)
+    except lv.LibvirtError as exc:
+        flash(f"Libvirt jest niedostępny: {exc}", "error")
+        return redirect(url_for("dashboard"))
+    if cur["state"] not in ("stopped", "crashed"):
+        flash("Zasoby można zmieniać tylko przy wyłączonej maszynie. Zamknij ją i spróbuj ponownie.", "error")
+        return redirect(url_for("dashboard"))
+
+    disk_now = -(-cur["disks"][0]["capacity"] // lv.GIB) if cur["disks"] else None
+    form = {"vcpus": cur["vcpus"], "ram_mb": cur["ram_max_mb"], "disk_gb": disk_now or ""}
+
+    def render():
+        return render_template("edit_vm.html", vm=vm, form=form, limits=LIMITS, min_ram=MIN_RAM_MB,
+                               min_disk=disk_now or MIN_DISK_GB, has_disk=disk_now is not None)
+
+    if request.method == "POST":
+        vcpus = _to_int(request.form.get("vcpus"))
+        ram_mb = _to_int(request.form.get("ram_mb"))
+        disk_gb = _to_int(request.form.get("disk_gb")) if disk_now is not None else None
+        form.update(vcpus=vcpus or "", ram_mb=ram_mb or "", disk_gb=disk_gb or "" if disk_now is not None else "")
+
+        errors = []
+        if vcpus is None or not 1 <= vcpus <= LIMITS["vcpus"]:
+            errors.append(f"Liczba vCPU: od 1 do {LIMITS['vcpus']}.")
+        if ram_mb is None or not MIN_RAM_MB <= ram_mb <= LIMITS["ram_mb"]:
+            errors.append(f"RAM: od {MIN_RAM_MB} do {LIMITS['ram_mb']} MB.")
+        if disk_now is not None:
+            if disk_gb is None or not disk_now <= disk_gb <= max(LIMITS["disk_gb"], disk_now):
+                errors.append(f"Dysk: od {disk_now} (obecny rozmiar - nie można zmniejszać) do {max(LIMITS['disk_gb'], disk_now)} GB.")
+        if errors:
+            for e in errors:
+                flash(e, "error")
+            return render()
+
+        try:
+            lv.update_vm_resources(
+                vm.libvirt_name,
+                vcpus=vcpus if vcpus != cur["vcpus"] else None,
+                ram_mb=ram_mb if ram_mb != cur["ram_max_mb"] else None,
+                disk_gb=disk_gb if disk_now is not None and disk_gb != disk_now else None,
+            )
+        except lv.LibvirtError as exc:
+            flash(f"Nie udało się zmienić zasobów: {exc}", "error")
+            return render()
+
+        vm.vcpus, vm.ram_mb = vcpus, ram_mb
+        if disk_now is not None:
+            vm.disk_gb = disk_gb
+        db.session.commit()
+        flash("Zasoby zostały zmienione. Zadziałają po uruchomieniu maszyny."
+              + (" Jeśli powiększono dysk, rozszerz partycję w systemie gościa." if disk_now and disk_gb != disk_now else ""),
+              "success")
+        return redirect(url_for("dashboard"))
+
+    return render()
+
+
 @app.route("/vms/<int:vm_id>/delete", methods=["POST"])
 @login_required
 def vm_delete(vm_id):

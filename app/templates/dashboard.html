@@ -57,6 +57,7 @@
                   <input type="hidden" name="action" value="start">
                   <button class="vm-btn" type="submit">Start</button>
                 </form>
+                <a class="vm-btn" href="{{ url_for('vm_edit', vm_id=vm.id) }}">Edytuj zasoby</a>
               {% elif row.state == 'running' %}
                 <button class="vm-btn" type="button" data-res-toggle
                         data-url="{{ url_for('vm_resources', vm_id=vm.id) }}">Zasoby</button>

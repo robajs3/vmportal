@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ vm.name }} — udostępniona maszyna</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap" style="max-width:560px">
+    <section class="vm-card">
+      <div class="vm-card-head">
+        <h2>{{ vm.name }}</h2>
+        {% if state %}<span class="vm-badge vm-badge-{{ state }}">{{ state }}</span>{% endif %}
+      </div>
+      {% if vm.description %}<p class="vm-desc">{{ vm.description }}</p>{% endif %}
+      {% if state and state != 'running' %}
+        <p class="vm-specs">Maszyna nie jest teraz uruchomiona — konsola może się nie połączyć.</p>
+      {% endif %}
+      <div class="vm-actions">
+        <a class="vm-btn vm-btn-primary" href="{{ vm.guacamole_url }}" target="_blank" rel="noopener">Otwórz konsolę</a>
+        <a class="vm-btn" href="{{ url_for('share_leave', token=share.token) }}">Wyloguj z udostępnienia</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,7 +1,8 @@
 import os
 import secrets
 import time
-from flask import Flask, render_template, redirect, url_for, request, flash, abort, make_response, jsonify
+from datetime import datetime, timedelta
+from flask import Flask, render_template, redirect, url_for, request, flash, abort, make_response, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -128,6 +129,29 @@ class VMInstance(db.Model):
     managed = db.Column(db.Boolean, nullable=False, default=False, server_default="false")
 
 
+class VMShare(db.Model):
+    """Udostępnienie maszyny linkiem: każdy z linkiem i hasłem dostaje konsolę (jedna maszyna).
+    Jedno udostępnienie na maszynę. Wiersz istnieje = udostępnienie aktywne."""
+    __tablename__ = "vm_shares"
+    id = db.Column(db.Integer, primary_key=True)
+    vm_id = db.Column(db.Integer, unique=True, nullable=False)
+    token = db.Column(db.String(64), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    guac_user = db.Column(db.String(80), nullable=False)  # konto Guacamole z READ tylko do tej maszyny
+    # zmiana hasła podbija wersję i unieważnia już odblokowane sesje
+    pw_version = db.Column(db.Integer, nullable=False, default=1, server_default="1")
+    failed_attempts = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    locked_until = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    created_by = db.Column(db.Integer)
+
+
+SHARE_MAX_ATTEMPTS = 5          # tyle błędnych haseł -> blokada linku
+SHARE_LOCK_MINUTES = 5
+SHARE_MIN_PASSWORD = 8
+SHARE_MAX_PASSWORD_BYTES = 72   # limit bcrypt
+
+
 MIGRATIONS = [
     "ALTER TABLE vm_instances ADD COLUMN IF NOT EXISTS owner_id INTEGER",
     "ALTER TABLE vm_instances ADD COLUMN IF NOT EXISTS libvirt_name VARCHAR(100)",
@@ -212,7 +236,8 @@ def _create_vmportal_user(hub_username: str):
     return user.id, user.username
 
 
-_PUBLIC_ENDPOINTS = {"static", "healthz"}
+# publiczne (bez konta) są też strony udostępnienia — zabezpiecza je hasło do linku
+_PUBLIC_ENDPOINTS = {"static", "healthz", "share_access", "share_leave", "guac_denied"}
 # endpointy dostępne dla zalogowanego, ale jeszcze niezatwierdzonego usera
 # guac_auth sam zwraca 401/403 (a nie redirect), bo woła go nginx przez auth_request
 _NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "guac_auth"}
@@ -222,6 +247,8 @@ _NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "gua
 def _sso_autologin():
     if request.endpoint in _PUBLIC_ENDPOINTS or current_user.is_authenticated:
         return
+    if request.endpoint == "guac_auth" and session.get("share_grant"):
+        return  # gość z udostępnienia — nie pytamy LoginHub przy każdym żądaniu do Guacamole
     local_id = sso_client.resolve_or_create_local_user(
         app_slug="vmportal", create_user=_create_vmportal_user
     )
@@ -245,6 +272,181 @@ def _unauthorized():
     # PrefixMiddleware wpisuje prefiks (/vmka1) do SCRIPT_NAME, a nie do request.path —
     # doklejamy go ręcznie, inaczej LoginHub odeśle usera poza appkę.
     return redirect(sso_client.login_url(request.script_root + request.path))
+
+
+# --- Udostępnianie maszyny linkiem + hasłem --------------------------------
+def _share_grant_valid(share):
+    """Czy ta sesja przeszła weryfikację hasła dla TEGO udostępnienia (i hasło nie zmieniło się od tamtej pory)."""
+    grant = session.get("share_grant")
+    return bool(
+        share and isinstance(grant, dict)
+        and grant.get("sid") == share.id and grant.get("pwv") == share.pw_version
+    )
+
+
+def _session_share():
+    """Aktywne udostępnienie odblokowane w tej sesji (albo None, jeśli brak/unieważnione)."""
+    grant = session.get("share_grant")
+    if not isinstance(grant, dict):
+        return None
+    share = db.session.get(VMShare, grant.get("sid") or 0)
+    return share if _share_grant_valid(share) else None
+
+
+def _drop_share(vm):
+    """Usuwa udostępnienie maszyny (wiersz + konto w Guacamole). Zwraca ostrzeżenie albo None."""
+    share = VMShare.query.filter_by(vm_id=vm.id).first()
+    if not share:
+        return None
+    warning = None
+    try:
+        guac.delete_user(share.guac_user)
+    except guac.GuacError as exc:
+        warning = f"Nie usunięto konta udostępnienia w Guacamole: {exc}"
+    db.session.delete(share)
+    db.session.commit()
+    return warning
+
+
+@app.after_request
+def _share_headers(resp):
+    # token jest w URL-u: nie wyciekaj go w Referer, nie indeksuj, nie cache'uj
+    if request.endpoint in ("share_access", "share_leave", "vm_share"):
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/vms/<int:vm_id>/share", methods=["GET", "POST"])
+@login_required
+def vm_share(vm_id):
+    """Panel zarządzania udostępnieniem (tylko właściciel maszyny / admin)."""
+    vm = db.session.get(VMInstance, vm_id) or abort(404)
+    if not can_manage(vm):
+        abort(403)
+    share = VMShare.query.filter_by(vm_id=vm.id).first()
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+        if action == "revoke":
+            if share:
+                warning = _drop_share(vm)
+                flash("Udostępnienie zostało cofnięte — link przestał działać.", "success")
+                if warning:
+                    flash(warning, "error")
+            return redirect(url_for("vm_share", vm_id=vm.id))
+
+        if action != "save":
+            abort(400)
+        password = request.form.get("password", "")
+        if len(password) < SHARE_MIN_PASSWORD:
+            flash(f"Hasło musi mieć co najmniej {SHARE_MIN_PASSWORD} znaków.", "error")
+            return redirect(url_for("vm_share", vm_id=vm.id))
+        if len(password.encode("utf-8")) > SHARE_MAX_PASSWORD_BYTES:
+            flash(f"Hasło jest za długie (maks. {SHARE_MAX_PASSWORD_BYTES} bajtów).", "error")
+            return redirect(url_for("vm_share", vm_id=vm.id))
+
+        pw_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+        if share:
+            # zmiana hasła: stare odblokowane sesje przestają działać, odblokowujemy też link po blokadzie
+            share.password_hash = pw_hash
+            share.pw_version += 1
+            share.failed_attempts = 0
+            share.locked_until = None
+            db.session.commit()
+            flash("Hasło do linku zostało zmienione. Osoby, które już weszły, stracą dostęp przy następnym żądaniu.", "success")
+        else:
+            if not vm.guac_connection_id:
+                flash("Tej maszyny nie da się udostępnić — nie ma połączenia w Guacamole.", "error")
+                return redirect(url_for("vm_share", vm_id=vm.id))
+            try:
+                guac_user = guac.create_share_user(vm.guac_connection_id)
+            except guac.GuacError as exc:
+                flash(f"Nie udało się włączyć udostępnienia: {exc}", "error")
+                return redirect(url_for("vm_share", vm_id=vm.id))
+            try:
+                db.session.add(VMShare(
+                    vm_id=vm.id, token=secrets.token_urlsafe(24), password_hash=pw_hash,
+                    guac_user=guac_user, created_by=current_user.id,
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                try:
+                    guac.delete_user(guac_user)
+                except guac.GuacError:
+                    pass
+                raise
+            flash("Udostępnienie włączone. Każdy, kto zna link i hasło, może otworzyć konsolę tej maszyny.", "success")
+        return redirect(url_for("vm_share", vm_id=vm.id))
+
+    share_path = url_for("share_access", token=share.token) if share else None
+    return render_template("share_vm.html", vm=vm, share=share, share_path=share_path,
+                           min_len=SHARE_MIN_PASSWORD)
+
+
+@app.route("/s/<token>", methods=["GET", "POST"])
+def share_access(token):
+    """Publiczna strona udostępnionej maszyny: formularz hasła, a po nim przycisk konsoli."""
+    share = VMShare.query.filter_by(token=token).first()
+    vm = db.session.get(VMInstance, share.vm_id) if share else None
+    if not share or not vm:
+        abort(404)
+
+    if request.method == "POST":
+        now = datetime.utcnow()
+        if share.locked_until and share.locked_until > now:
+            flash("Za dużo błędnych prób. Spróbuj ponownie za kilka minut.", "error")
+            return render_template("share_login.html", vm=vm), 429
+        password = request.form.get("password", "")
+        ok = len(password.encode("utf-8")) <= SHARE_MAX_PASSWORD_BYTES and \
+            bcrypt.check_password_hash(share.password_hash, password)
+        if not ok:
+            share.failed_attempts += 1
+            if share.failed_attempts >= SHARE_MAX_ATTEMPTS:
+                share.failed_attempts = 0
+                share.locked_until = now + timedelta(minutes=SHARE_LOCK_MINUTES)
+                app.logger.warning("Udostępnienie VM %s zablokowane po serii błędnych haseł (IP %s)",
+                                   vm.id, request.headers.get("X-Real-IP", request.remote_addr))
+            db.session.commit()
+            flash("Nieprawidłowe hasło.", "error")
+            return render_template("share_login.html", vm=vm), 403
+        share.failed_attempts = 0
+        share.locked_until = None
+        db.session.commit()
+        session["share_grant"] = {"sid": share.id, "pwv": share.pw_version, "tok": share.token}
+        session.permanent = False
+        return redirect(url_for("share_access", token=token))
+
+    if not _share_grant_valid(share):
+        return render_template("share_login.html", vm=vm)
+
+    state = None
+    if vm.libvirt_name:
+        try:
+            state = lv.domain_states().get(vm.libvirt_name, "unknown")
+        except lv.LibvirtError:
+            state = None
+    return render_template("share_view.html", vm=vm, share=share, state=state)
+
+
+@app.route("/guac-denied")
+def guac_denied():
+    """Cel przekierowania z nginx, gdy /_guac_auth zwróci 401 (sesja wygasła / hasło zmienione).
+    Gość z udostępnienia wraca na stronę swojego linku (hasło), a nie do LoginHub;
+    wszyscy inni - jak dotąd - na dashboard."""
+    grant = session.get("share_grant")
+    tok = grant.get("tok") if isinstance(grant, dict) else None
+    if tok:
+        return redirect(url_for("share_access", token=tok))
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/s/<token>/leave")
+def share_leave(token):
+    session.pop("share_grant", None)
+    return redirect(url_for("share_access", token=token))
 
 
 @app.route("/", methods=["GET"])
@@ -343,6 +545,8 @@ def admin_set_access(user_id):
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    session.pop("share_grant", None)  # zalogowany user wraca do własnego konta w Guacamole
+    shared_ids = {sh.vm_id for sh in VMShare.query.all()}
     vms = VMInstance.query.order_by(VMInstance.name).all()
     libvirt_error = None
     try:
@@ -356,6 +560,7 @@ def dashboard():
             "vm": vm,
             "state": states.get(vm.libvirt_name, "unknown") if vm.libvirt_name else None,
             "can_manage": can_manage(vm),
+            "shared": vm.id in shared_ids,
         }
         for vm in vms
     ]
@@ -596,6 +801,9 @@ def vm_delete(vm_id):
     try:
         if vm.managed and vm.libvirt_name:
             lv.delete_vm(vm.libvirt_name)
+        warning = _drop_share(vm)
+        if warning:
+            flash(warning, "error")
         if vm.guac_connection_id:
             try:
                 guac.delete_connection(vm.guac_connection_id)
@@ -619,6 +827,11 @@ def guac_auth():
     """Wołane przez nginx (auth_request) przy KAŻDYM żądaniu do /guacamole/.
     200 + X-Guac-User => nginx podaje ten nagłówek Guacamole (rozszerzenie header-auth)
     i user wchodzi bez ekranu logowania. 401 => niezalogowany, 403 => brak zgody admina."""
+    # Gość z linkiem udostępnienia: wchodzi na wyizolowane konto z dostępem tylko do jednej maszyny.
+    share = _session_share()
+    if share:
+        return "", 200, {"X-Guac-User": share.guac_user}
+
     if not current_user.is_authenticated:
         return "", 401
     if not has_access():

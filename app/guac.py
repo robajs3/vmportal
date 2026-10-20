@@ -1,6 +1,7 @@
 """Klient REST API Guacamole: tworzenie/usuwanie połączeń VNC i nadawanie uprawnień."""
 import base64
 import os
+import secrets
 from urllib.parse import quote
 
 import requests
@@ -122,6 +123,53 @@ def create_connection(name, hostname, port, vnc_password, grant_users=()):
             except (requests.RequestException, GuacError):
                 pass
         return conn_id
+    except requests.RequestException as exc:
+        raise GuacError(f"Błąd komunikacji z Guacamole: {exc}") from exc
+    finally:
+        _logout(token)
+
+
+def create_share_user(conn_id):
+    """Tworzy jednorazowe konto Guacamole z uprawnieniem READ WYŁĄCZNIE do jednego połączenia.
+    Używane przez udostępnianie linkiem: gość po podaniu hasła wchodzi (przez nagłówek SSO
+    z nginx) jako to konto i widzi tylko tę jedną maszynę. Zwraca nazwę konta."""
+    token, ds = _login()
+    headers = {"Guacamole-Token": token}
+    username = "share-" + secrets.token_hex(6)
+    try:
+        r = requests.post(
+            f"{INTERNAL_URL}/api/session/data/{ds}/users",
+            json={"username": username, "password": secrets.token_hex(24), "attributes": {}},
+            headers=headers, timeout=TIMEOUT,
+        )
+        if r.status_code not in (200, 201):
+            raise GuacError(f"Nie udało się założyć konta udostępnienia (HTTP {r.status_code}): {r.text[:200]}")
+        r = requests.patch(
+            f"{INTERNAL_URL}/api/session/data/{ds}/users/{quote(username, safe='')}/permissions",
+            json=[{"op": "add", "path": f"/connectionPermissions/{conn_id}", "value": "READ"}],
+            headers=headers, timeout=TIMEOUT,
+        )
+        if r.status_code not in (200, 204):
+            requests.delete(
+                f"{INTERNAL_URL}/api/session/data/{ds}/users/{quote(username, safe='')}",
+                headers=headers, timeout=TIMEOUT,
+            )
+            raise GuacError(f"Nie nadano uprawnień kontu udostępnienia (HTTP {r.status_code}): {r.text[:200]}")
+        return username
+    except requests.RequestException as exc:
+        raise GuacError(f"Błąd komunikacji z Guacamole: {exc}") from exc
+    finally:
+        _logout(token)
+
+
+def delete_user(username):
+    """Usuwa konto Guacamole (np. po cofnięciu udostępnienia)."""
+    token, ds = _login()
+    try:
+        requests.delete(
+            f"{INTERNAL_URL}/api/session/data/{ds}/users/{quote(username, safe='')}",
+            headers={"Guacamole-Token": token}, timeout=TIMEOUT,
+        )
     except requests.RequestException as exc:
         raise GuacError(f"Błąd komunikacji z Guacamole: {exc}") from exc
     finally:

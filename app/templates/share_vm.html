@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Udostępnianie {{ vm.name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>Udostępnianie: {{ vm.name }}</h1>
+      <a class="vm-btn" href="{{ url_for('dashboard') }}">← Wróć</a>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% if share %}
+      <p>Udostępnienie jest <strong>aktywne</strong>. Każdy, kto zna poniższy link i hasło, może otworzyć konsolę
+         tej maszyny (bez konta w portalu). Widzi wyłącznie tę jedną maszynę.</p>
+
+      <div class="vm-form">
+        <label>Link do udostępnienia
+          <div class="vm-upload-row">
+            <input type="text" id="share-url" data-path="{{ share_path }}" value="{{ share_path }}" readonly style="flex:1 1 320px">
+            <button type="button" class="vm-btn" id="copy-url">Kopiuj</button>
+          </div>
+          <small>Hasła nie da się odczytać (jest zapisane jako hash) — przekaż je osobno od linku.</small>
+        </label>
+      </div>
+
+      <h2>Zmień hasło</h2>
+    {% else %}
+      <p>Maszyna nie jest udostępniona. Ustaw hasło, a portal wygeneruje link. Każdy, kto go pozna
+         i poda hasło, wejdzie do konsoli tej maszyny bez zakładania konta.</p>
+      <h2>Włącz udostępnianie</h2>
+    {% endif %}
+
+    <form method="post" class="vm-form" autocomplete="off">
+      <input type="hidden" name="action" value="save">
+      <label>Hasło do linku
+        <div class="vm-upload-row">
+          <input type="text" name="password" id="share-pw" minlength="{{ min_len }}" maxlength="72"
+                 required autocomplete="new-password" style="flex:1 1 240px">
+          <button type="button" class="vm-btn" id="gen-pw">Wygeneruj</button>
+        </div>
+        <small>Min. {{ min_len }} znaków. Po 5 błędnych próbach link blokuje się na 5 minut.</small>
+      </label>
+      <div><button type="submit" class="vm-btn vm-btn-primary">{{ 'Zmień hasło' if share else 'Włącz udostępnianie' }}</button></div>
+    </form>
+
+    {% if share %}
+      <h2>Cofnij udostępnienie</h2>
+      <form method="post" onsubmit="return confirm('Cofnąć udostępnienie? Link przestanie działać.');">
+        <input type="hidden" name="action" value="revoke">
+        <button type="submit" class="vm-btn vm-btn-danger">Cofnij udostępnienie</button>
+      </form>
+    {% endif %}
+  </main>
+
+  <script>
+  (function () {
+    var url = document.getElementById('share-url');
+    if (url) {
+      url.value = location.origin + url.dataset.path;
+      document.getElementById('copy-url').addEventListener('click', function () {
+        url.select();
+        (navigator.clipboard ? navigator.clipboard.writeText(url.value) : Promise.resolve(document.execCommand('copy')))
+          .then(function () { var b = document.getElementById('copy-url'); b.textContent = 'Skopiowano'; setTimeout(function () { b.textContent = 'Kopiuj'; }, 1500); });
+      });
+    }
+    document.getElementById('gen-pw').addEventListener('click', function () {
+      var chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789', out = '';
+      var buf = new Uint32Array(16); crypto.getRandomValues(buf);
+      for (var i = 0; i < buf.length; i++) out += chars[buf[i] % chars.length];
+      document.getElementById('share-pw').value = out;
+    });
+  })();
+  </script>
+</body>
+</html>

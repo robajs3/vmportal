@@ -77,6 +77,10 @@
               {% endif %}
             {% endif %}
 
+            {% if row.can_manage and vm.guac_connection_id %}
+              <a class="vm-btn" href="{{ url_for('vm_share', vm_id=vm.id) }}">{{ 'Udostępniona ✓' if row.shared else 'Udostępnij' }}</a>
+            {% endif %}
+
             {% if row.can_manage %}
               <form method="post" action="{{ url_for('vm_delete', vm_id=vm.id) }}"
                     onsubmit="return confirm('Usunąć „{{ vm.name }}”{% if vm.managed %} wraz z dyskiem{% endif %}? Tej operacji nie można cofnąć.');">

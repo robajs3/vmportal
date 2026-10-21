@@ -792,6 +792,108 @@ def vm_edit(vm_id):
     return render()
 
 
+def _clone_name_suggestion(base):
+    """Propozycja nazwy klona zgodna z NAME_RE (3-32 znaki) i wolna w bazie."""
+    for i in range(1, 100):
+        suffix = "-clone" if i == 1 else f"-clone{i}"
+        cand = (base[: 32 - len(suffix)].rstrip("-") + suffix)
+        if lv.NAME_RE.match(cand) and not VMInstance.query.filter_by(libvirt_name=cand).first():
+            return cand
+    return ""
+
+
+@app.route("/vms/<int:vm_id>/clone", methods=["GET", "POST"])
+@login_required
+def vm_clone(vm_id):
+    """Klonowanie wyłączonej maszyny: pełna kopia dysków + nowa maszyna z własną konsolą."""
+    vm = db.session.get(VMInstance, vm_id) or abort(404)
+    if not can_manage(vm) or not vm.libvirt_name:
+        abort(403)
+
+    try:
+        cur = lv.vm_resources(vm.libvirt_name)
+    except lv.LibvirtError as exc:
+        flash(f"Libvirt jest niedostępny: {exc}", "error")
+        return redirect(url_for("dashboard"))
+    if cur["state"] not in ("stopped", "crashed"):
+        flash("Maszynę można sklonować tylko wtedy, gdy jest wyłączona. Zamknij ją i spróbuj ponownie.", "error")
+        return redirect(url_for("dashboard"))
+
+    disk_now = -(-cur["disks"][0]["capacity"] // lv.GIB) if cur["disks"] else None
+    specs = {"vcpus": cur["vcpus"], "ram_mb": cur["ram_max_mb"], "disk_gb": disk_now}
+    form = {
+        "name": _clone_name_suggestion(vm.libvirt_name),
+        "description": (f"Klon maszyny {vm.name}")[:500],
+    }
+
+    def render():
+        return render_template("clone_vm.html", vm=vm, form=form, specs=specs)
+
+    if request.method == "POST":
+        form["name"] = request.form.get("name", "").strip().lower()
+        form["description"] = request.form.get("description", "").strip()[:500]
+
+        errors = []
+        if not lv.NAME_RE.match(form["name"]):
+            errors.append("Nazwa: 3–32 znaki, małe litery, cyfry i myślniki, zaczyna się od litery.")
+        elif VMInstance.query.filter_by(libvirt_name=form["name"]).first():
+            errors.append("Maszyna o takiej nazwie już istnieje.")
+        if not is_admin():
+            owned = VMInstance.query.filter_by(owner_id=current_user.id, managed=True).count()
+            if owned >= LIMITS["vms_per_user"]:
+                errors.append(f"Osiągnięto limit {LIMITS['vms_per_user']} maszyn na użytkownika.")
+        if errors:
+            for e in errors:
+                flash(e, "error")
+            return render()
+
+        created = None
+        conn_id = None
+        try:
+            reserved = [v.vnc_port for v in VMInstance.query.filter(VMInstance.vnc_port.isnot(None)).all()]
+            created = lv.clone_vm(vm.libvirt_name, form["name"], reserved)
+            conn_id = guac.create_connection(
+                form["name"], VM_HOST, created["vnc_port"], created["vnc_password"],
+                grant_users=GUAC_GRANT_USERS + [guac_username(current_user)],
+            )
+            clone = VMInstance(
+                name=form["name"],
+                description=form["description"],
+                guacamole_url=guac.client_url(conn_id),
+                owner_id=current_user.id,
+                libvirt_name=form["name"],
+                vcpus=created["vcpus"], ram_mb=created["ram_mb"], disk_gb=created["disk_gb"],
+                vnc_port=created["vnc_port"],
+                guac_connection_id=conn_id,
+                managed=True,
+            )
+            db.session.add(clone)
+            db.session.commit()
+        except (lv.LibvirtError, guac.GuacError) as exc:
+            db.session.rollback()
+            # sprzątanie po nieudanej operacji
+            if conn_id:
+                try:
+                    guac.delete_connection(conn_id)
+                except guac.GuacError:
+                    pass
+            if created:
+                try:
+                    lv.delete_vm(created["name"])
+                except lv.LibvirtError:
+                    pass
+            flash(f"Nie udało się sklonować maszyny: {exc}", "error")
+            return render()
+
+        app.logger.info("Użytkownik %s sklonował VM '%s' jako '%s'",
+                        current_user.username, vm.libvirt_name, form["name"])
+        flash(f"Maszyna „{vm.name}” została sklonowana jako „{form['name']}”. "
+              "Klon jest wyłączony - uruchom go przyciskiem Start.", "success")
+        return redirect(url_for("dashboard"))
+
+    return render()
+
+
 @app.route("/vms/<int:vm_id>/delete", methods=["POST"])
 @login_required
 def vm_delete(vm_id):

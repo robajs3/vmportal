@@ -401,6 +401,132 @@ def create_vm(name, vcpus, ram_mb, disk_gb, os_type, iso_name, reserved_ports=()
         return {"name": name, "vnc_port": port, "vnc_password": vnc_password}
 
 
+def clone_vm(source_name, new_name, reserved_ports=()):
+    """Klonuje WYŁĄCZONĄ maszynę: pełna kopia dysków (do puli IMAGES_POOL) + nowa domena
+    z nowym UUID, nowymi adresami MAC oraz nowym portem i hasłem VNC.
+    Operacja jest synchroniczna - przy dużych dyskach trwa minuty.
+    Zwraca dict z danymi do Guacamole i do zapisu w bazie portalu."""
+    if not NAME_RE.match(new_name):
+        raise LibvirtError("Nieprawidłowa nazwa maszyny.")
+
+    with connection() as conn:
+        if new_name in {d.name() for d in conn.listAllDomains(0)}:
+            raise LibvirtError("Maszyna o takiej nazwie już istnieje w libvirt.")
+        try:
+            src = conn.lookupByName(source_name)
+        except libvirt.libvirtError as exc:
+            raise LibvirtError(f"Maszyna źródłowa „{source_name}” nie istnieje w libvirt.") from exc
+        if src.isActive():
+            raise LibvirtError("Klonować można tylko wyłączoną maszynę - zamknij ją i spróbuj ponownie.")
+
+        _state, max_kib, _cur_kib, vcpus, _cpu_ns = src.info()
+        root = ET.fromstring(src.XMLDesc(libvirt.VIR_DOMAIN_XML_INACTIVE))
+
+        # --- walidacja przed jakąkolwiek zmianą ---------------------------------
+        graphics = next((g for g in root.findall("./devices/graphics") if g.get("type") == "vnc"), None)
+        if graphics is None:
+            raise LibvirtError("Maszyna nie ma konsoli VNC - nie da się jej podpiąć do Guacamole.")
+
+        os_el = root.find("os")
+        nvram = os_el.find("nvram") if os_el is not None else None
+        if nvram is not None:
+            if os_el.get("firmware"):
+                os_el.remove(nvram)  # firmware='efi': libvirt sam utworzy nowy NVRAM
+            else:
+                raise LibvirtError("Klonowanie maszyn UEFI z ręcznie podpiętym NVRAM nie jest obsługiwane.")
+
+        disks = []
+        for disk in root.findall("./devices/disk[@device='disk']"):
+            source = disk.find("source")
+            path = source.get("file") if source is not None else None
+            if not path:
+                raise LibvirtError("Klonowanie obsługuje tylko dyski plikowe (maszyna ma inny typ dysku).")
+            try:
+                svol = conn.storageVolLookupByPath(path)
+            except libvirt.libvirtError as exc:
+                raise LibvirtError(
+                    f"Dysk „{path}” nie należy do żadnej puli libvirt - nie można go sklonować z portalu."
+                ) from exc
+            disks.append((disk, source, svol))
+        if not disks:
+            raise LibvirtError("Maszyna nie ma żadnego dysku do sklonowania.")
+
+        pool = conn.storagePoolLookupByName(IMAGES_POOL)
+        if not pool.isActive():
+            raise LibvirtError(f"Pula obrazów „{IMAGES_POOL}” jest nieaktywna.")
+        pool.refresh(0)
+        needed = sum(svol.info()[2] for _d, _s, svol in disks)  # faktycznie zajęte bajty
+        available = pool.info()[3]
+        if needed > available:
+            raise LibvirtError(
+                f"Za mało miejsca w puli „{IMAGES_POOL}” (wolne {available // 1048576} MB, "
+                f"kopia dysków potrzebuje ok. {needed // 1048576} MB)."
+            )
+
+        # --- kopiowanie dysków --------------------------------------------------
+        created = []
+        dom = None
+        try:
+            for i, (disk, source, svol) in enumerate(disks):
+                vol_name = f"{new_name}.qcow2" if i == 0 else f"{new_name}-{i}.qcow2"
+                capacity = svol.info()[1]
+                vol_xml = (
+                    f"<volume><name>{escape(vol_name)}</name>"
+                    f"<capacity unit='bytes'>{int(capacity)}</capacity>"
+                    "<target><format type='qcow2'/></target></volume>"
+                )
+                new_vol = pool.createXMLFrom(vol_xml, svol, 0)
+                created.append(new_vol)
+
+                source.set("file", new_vol.path())
+                driver = disk.find("driver")
+                if driver is None:
+                    driver = ET.SubElement(disk, "driver", name="qemu")
+                driver.set("type", "qcow2")
+                for bs in disk.findall("backingStore"):
+                    disk.remove(bs)
+
+            # --- nowa tożsamość domeny -----------------------------------------
+            root.find("name").text = new_name
+            for el in root.findall("uuid"):
+                root.remove(el)  # nowy UUID nada libvirt
+            for iface in root.findall("./devices/interface"):
+                for mac in iface.findall("mac"):
+                    iface.remove(mac)
+            for sec in root.findall("seclabel"):
+                root.remove(sec)  # etykiety AppArmor/SELinux przypisze libvirt od nowa
+
+            # port wybieramy dopiero teraz - kopiowanie trwa, a w międzyczasie ktoś mógł zająć port
+            port = _pick_vnc_port(conn, reserved_ports)
+            vnc_password = secrets.token_hex(4)  # VNC: max 8 znaków
+            graphics.set("port", str(port))
+            graphics.set("autoport", "no")
+            graphics.set("passwd", vnc_password)
+
+            dom = conn.defineXML(ET.tostring(root, encoding="unicode"))
+        except Exception:
+            try:
+                if dom is not None:
+                    dom.undefine()
+            finally:
+                for v in created:
+                    try:
+                        v.delete(0)
+                    except libvirt.libvirtError:
+                        pass
+            raise
+
+        disk_gb = -(-created[0].info()[1] // GIB)  # pierwszy dysk, w górę
+        return {
+            "name": new_name,
+            "vnc_port": port,
+            "vnc_password": vnc_password,
+            "vcpus": vcpus,
+            "ram_mb": max_kib // 1024,
+            "disk_gb": disk_gb,
+        }
+
+
 def power(name, action):
     with connection() as conn:
         dom = conn.lookupByName(name)

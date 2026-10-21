@@ -58,7 +58,9 @@
                   <button class="vm-btn" type="submit">Start</button>
                 </form>
                 <a class="vm-btn" href="{{ url_for('vm_edit', vm_id=vm.id) }}">Edytuj zasoby</a>
+                <a class="vm-btn" href="{{ url_for('vm_clone', vm_id=vm.id) }}">Klonuj</a>
               {% elif row.state == 'running' %}
+                <button class="vm-btn" type="button" disabled title="Zamknij maszynę, aby ją sklonować">Klonuj</button>
                 <button class="vm-btn" type="button" data-res-toggle
                         data-url="{{ url_for('vm_resources', vm_id=vm.id) }}">Zasoby</button>
                 <form method="post" action="{{ url_for('vm_power', vm_id=vm.id) }}">

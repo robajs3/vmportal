@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Klonuj maszynę {{ vm.name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>Klonuj: {{ vm.name }}</h1>
+      <a class="vm-btn" href="{{ url_for('dashboard') }}">← Wróć</a>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <p class="vm-specs">
+      Źródło: {{ specs.vcpus }} vCPU · {{ specs.ram_mb }} MB RAM
+      {% if specs.disk_gb %}· {{ specs.disk_gb }} GB dysk{% endif %}
+    </p>
+
+    <form method="post" class="vm-form" autocomplete="off" id="clone-form">
+      <label>Nazwa klona
+        <input type="text" name="name" value="{{ form.name }}" required
+               pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]">
+        <small>3–32 znaki: małe litery, cyfry, myślniki.</small>
+      </label>
+
+      <label>Opis (opcjonalnie)
+        <input type="text" name="description" value="{{ form.description }}" maxlength="500">
+      </label>
+
+      <small>
+        Klon dostaje pełną kopię dysku, te same zasoby (vCPU / RAM) oraz własną konsolę.
+        Powstaje wyłączony - uruchom go po sklonowaniu. Kopiowanie dużego dysku może potrwać kilka minut,
+        nie zamykaj strony.
+      </small>
+      <small>
+        Uwaga: system w środku jest identyczny z oryginałem (ta sama nazwa hosta, machine-id, klucze SSH).
+        Jeśli oba systemy będą w tej samej sieci, zmień im nazwę hosta, a w razie potrzeby wygeneruj nowe klucze.
+      </small>
+
+      <button type="submit" class="vm-btn vm-btn-primary" id="clone-submit">Klonuj</button>
+    </form>
+  </main>
+
+  <script>
+    document.getElementById('clone-form').addEventListener('submit', function () {
+      var b = document.getElementById('clone-submit');
+      // disabled w handlerze submit nie blokuje wysyłki formularza; chroni przed podwójnym kliknięciem
+      b.disabled = true;
+      b.textContent = 'Klonowanie… to może potrwać kilka minut';
+    });
+  </script>
+</body>
+</html>

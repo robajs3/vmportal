@@ -116,6 +116,7 @@ def build_env(profile, secret):
         "NEKO_SERVER_PATH_PREFIX": f"{PATH_PREFIX}/{pid}",
         "NEKO_SERVER_METRICS": "false",
         "NEKO_SESSION_COOKIE_ENABLED": "false",   # token zamiast ciasteczka (nginx i tak wycina Cookie)
+        "NEKO_SESSION_IMPLICIT_HOSTING": "true",  # kontrolę przejmuje ten, kto kliknie w ekran (bez ręcznego "Take control")
         "NEKO_MEMBER_PROVIDER": "multiuser",
         "NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD": session_password(secret, pid, "admin"),
         "NEKO_MEMBER_MULTIUSER_USER_PASSWORD": session_password(secret, pid, "user"),

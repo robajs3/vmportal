@@ -20,6 +20,6 @@
   "DeveloperToolsAvailability": 1,
   "DownloadRestrictions": 3,
   "AllowFileSelectionDialogs": false,
-  "URLBlocklist": ["file://*", "chrome://policy", "chrome://extensions", "chrome://flags"],
-  "ExtensionInstallBlocklist": ["*"]
+  "URLBlocklist": ["file://*", "chrome://policy", "chrome://extensions", "chrome://flags",
+                   "chromewebstore.google.com", "chrome.google.com/webstore"]
 }

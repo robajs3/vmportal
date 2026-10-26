@@ -128,6 +128,9 @@ services:
       # hub-web to nazwa kontenera LoginHub w sieci sso_net.
       SSO_SECRET: ${SSO_SECRET:-}
       HUB_INTERNAL_URL: ${HUB_INTERNAL_URL:-http://hub-web:8000}
+      # Dev login (/devlogin) — hasło, tylko z LAN. Puste = wyłączone.
+      DEVLOGIN_PASSWORD: ${DEVLOGIN_PASSWORD:-}
+      DEVLOGIN_ALLOWED_HOSTS: ${DEVLOGIN_ALLOWED_HOSTS:-}
       # --- Przeglądarki ---
       BROWSER_DOCKER_HOST: tcp://docker-proxy:2375
       BROWSER_POOL_RAM_MB: ${BROWSER_POOL_RAM_MB:-4096}

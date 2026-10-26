@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Dev login — VM Portal</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="auth-box">
+        <h1>Dev login</h1>
+        <p style="color:#666;font-size:.85rem;margin-top:-6px">Dostępne tylko z sieci lokalnej.</p>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+        <form method="POST" action="{{ url_for('devlogin') }}">
+            <label for="username">Zaloguj jako</label>
+            <input type="text" id="username" name="username" value="{{ default_user }}" required>
+
+            <label for="password">Hasło dev</label>
+            <input type="password" id="password" name="password" required autofocus>
+
+            <button type="submit">Zaloguj</button>
+        </form>
+        <p class="auth-alt"><a href="{{ url_for('login') }}">Wróć do zwykłego logowania</a></p>
+    </div>
+</body>
+</html>

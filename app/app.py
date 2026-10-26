@@ -1,3 +1,5 @@
+import hmac
+import ipaddress
 import os
 import secrets
 import time
@@ -242,7 +244,7 @@ def _create_vmportal_user(hub_username: str):
 _PUBLIC_ENDPOINTS = {"static", "healthz", "share_access", "share_leave", "guac_denied"}
 # endpointy dostępne dla zalogowanego, ale jeszcze niezatwierdzonego usera
 # guac_auth i br_auth same zwracają 401/403 (a nie redirect), bo woła go nginx przez auth_request
-_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "guac_auth", "br_auth"}
+_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "devlogin", "guac_auth", "br_auth"}
 
 
 @app.before_request
@@ -483,6 +485,93 @@ def login():
     return render_template(
         "login.html", hub_login_url=sso_client.login_url(url_for("dashboard"))
     )
+
+
+# --- Dev login: hasło, TYLKO z sieci lokalnej (nigdy przez Tailscale Funnel) ----------
+# Włączany ustawieniem DEVLOGIN_PASSWORD (puste = trasa zwraca 404).
+# Zasada: fail-closed — wystarczy jedna oznaka ruchu z zewnątrz, żeby odmówić.
+_DEVLOGIN_FAILS = {}  # ip -> [timestampy nieudanych prób]
+_DEVLOGIN_MAX_FAILS = 5
+_DEVLOGIN_WINDOW = 300  # s
+
+
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")  # adresy Tailscale (100.x) NIE są "lokalne"
+
+
+def _is_lan_ip(value):
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.version == 4 and ip in _CGNAT:
+        return False
+    return ip.is_loopback or ip.is_private
+
+
+def _devlogin_client_ips():
+    ips = []
+    for h in ("X-Forwarded-For", "X-Real-IP"):
+        ips += [x for x in request.headers.get(h, "").split(",") if x.strip()]
+    if request.remote_addr:
+        ips.append(request.remote_addr)
+    return ips
+
+
+def _devlogin_host_ok():
+    host = request.host.split(":")[0].strip("[]").lower()
+    allowed = [h.strip().lower() for h in os.environ.get("DEVLOGIN_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    if allowed:
+        return host in allowed
+    # domyślnie: tylko adres IP z LAN (np. 192.168.1.150) albo localhost — nie nazwa *.ts.net
+    return host == "localhost" or _is_lan_ip(host)
+
+
+def _devlogin_network_ok():
+    if request.headers.get("Tailscale-Funnel-Request"):  # tailscaled dokleja to do całego ruchu z Funnela
+        return False
+    if not _devlogin_host_ok():
+        return False
+    ips = _devlogin_client_ips()
+    return bool(ips) and all(_is_lan_ip(ip) for ip in ips)
+
+
+def _devlogin_client_key():
+    ips = [x.strip() for x in request.headers.get("X-Real-IP", "").split(",") if x.strip()]
+    return ips[0] if ips else (request.remote_addr or "?")
+
+
+@app.route("/devlogin", methods=["GET", "POST"])
+def devlogin():
+    dev_password = os.environ.get("DEVLOGIN_PASSWORD", "")
+    if not dev_password or not _devlogin_network_ok():
+        abort(404)  # z zewnątrz ta trasa po prostu "nie istnieje"
+
+    if request.method == "POST":
+        key = _devlogin_client_key()
+        now = time.time()
+        fails = [t for t in _DEVLOGIN_FAILS.get(key, []) if now - t < _DEVLOGIN_WINDOW]
+        _DEVLOGIN_FAILS[key] = fails
+        if len(fails) >= _DEVLOGIN_MAX_FAILS:
+            flash("Za dużo prób — odczekaj kilka minut.", "error")
+            return render_template("devlogin.html", default_user=os.environ.get("ADMIN_USERNAME", "")), 429
+
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user = User.query.filter_by(username=username).first() if username else None
+        pw_ok = hmac.compare_digest(password.encode("utf-8"), dev_password.encode("utf-8"))
+        if user and pw_ok:
+            _DEVLOGIN_FAILS.pop(key, None)
+            login_user(user)
+            app.logger.warning("devlogin: zalogowano jako %s z %s", user.username, key)
+            return redirect(url_for("dashboard"))
+
+        fails.append(now)
+        app.logger.warning("devlogin: nieudana próba (%s) z %s", username, key)
+        flash("Nieprawidłowa nazwa użytkownika lub hasło.", "error")
+
+    return render_template("devlogin.html", default_user=os.environ.get("ADMIN_USERNAME", ""))
 
 
 @app.route("/logout")

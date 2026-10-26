@@ -1,0 +1,84 @@
+{% extends "browsers_base.html" %}
+{% block actions %}<a class="vm-btn vm-btn-primary" href="{{ url_for('browser_new') }}">+ Nowy profil</a>{% endblock %}
+{% block content %}
+  {% if error %}<div class="vm-flash vm-flash-error">{{ error }}</div>{% endif %}
+
+  {% if pool %}
+    <section class="vm-card br-pool">
+      <div class="vm-res-head">
+        <span class="vm-res-label">Wspólna pula RAM</span>
+        <span class="vm-res-main">{{ pool.reserved_mb }} / {{ pool.budget_mb }} MB zarezerwowane · {{ pool.sessions }} sesji</span>
+      </div>
+      <div class="vm-progress"><div class="vm-progress-bar" style="width: {{ [100, (pool.reserved_mb / pool.budget_mb * 100) if pool.budget_mb else 100]|min|round|int }}%"></div></div>
+      <small>Fizyczny RAM puli: {{ pool.physical_mb }} MB; limity sesji mogą go nieco przekraczać (nadsubskrypcja), bo przeglądarki rzadko zużywają cały przydział. Zatrzymana sesja zwalnia całą rezerwację.</small>
+    </section>
+  {% endif %}
+
+  {% if not rows %}<p>Brak profili. Utwórz pierwszy przyciskiem „Nowy profil”.</p>{% endif %}
+
+  <div class="vm-list">
+    {% for r in rows %}
+      {% set p = r.p %}
+      <section class="vm-card">
+        <div class="vm-card-head">
+          <h2>{{ p.name }}</h2>
+          <span class="vm-badge vm-badge-{{ 'running' if r.state == 'running' else ('crashed' if r.state in ('dead','exited') else 'stopped') }}">{{ 'działa' if r.state == 'running' else ('zatrzymana' if r.state == 'stopped' else r.state) }}</span>
+        </div>
+        {% if not r.mine %}<p class="vm-desc">Profil użytkownika <b>{{ r.owner }}</b> — prywatny.</p>{% endif %}
+        <p class="vm-specs">{{ r.fp }}</p>
+        <p class="vm-specs">{{ p.ram_mb }} MB RAM · {{ p.resolution }} · {{ p.timezone }} · {{ p.lang }}
+          {% if r.n_ext %}· wtyczek: {{ r.n_ext }}{% endif %}
+          · {{ 'w tle' if p.background else ('usypia po ' ~ p.idle_minutes ~ ' min' if p.idle_minutes else 'bez usypiania') }}</p>
+        <div class="vm-actions">
+          {% if r.can_open %}
+            {% if r.state == 'running' %}
+              <a class="vm-btn vm-btn-primary" href="{{ url_for('browser_view', profile_id=p.id) }}">Otwórz</a>
+              <button class="vm-btn" type="button" data-res-toggle data-url="{{ url_for('browser_resources', profile_id=p.id) }}">Zasoby</button>
+            {% else %}
+              <form method="post" action="{{ url_for('browser_start', profile_id=p.id) }}">
+                <button class="vm-btn vm-btn-primary" type="submit">Start</button>
+              </form>
+            {% endif %}
+            <a class="vm-btn" href="{{ url_for('browser_edit', profile_id=p.id) }}">Edytuj</a>
+          {% endif %}
+          {% if r.state != 'stopped' %}
+            <form method="post" action="{{ url_for('browser_stop', profile_id=p.id) }}">
+              <button class="vm-btn" type="submit">Stop</button>
+            </form>
+          {% endif %}
+          {% if r.mine or is_admin() %}
+            <form method="post" action="{{ url_for('browser_delete', profile_id=p.id) }}"
+                  onsubmit="return confirm('Usunąć profil „{{ p.name }}” razem z ciasteczkami i historią? Tej operacji nie można cofnąć.');">
+              <button class="vm-btn vm-btn-danger" type="submit">Usuń</button>
+            </form>
+          {% endif %}
+        </div>
+        <div class="vm-res" data-res-panel hidden></div>
+      </section>
+    {% endfor %}
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  function bind(btn) {
+    var panel = btn.closest('.vm-card').querySelector('[data-res-panel]');
+    var timer = null;
+    function tick() {
+      fetch(btn.dataset.url, { credentials: 'same-origin' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.j.error || 'błąd');
+          panel.textContent = 'RAM: ' + res.j.mem_mb + ' MB z ' + res.j.limit_mb + ' MB · CPU: ' + res.j.cpu_pct + '%';
+        })
+        .catch(function (e) { panel.textContent = 'Nie udało się pobrać danych: ' + e.message; });
+    }
+    btn.addEventListener('click', function () {
+      if (panel.hidden) { panel.hidden = false; btn.textContent = 'Ukryj zasoby'; panel.textContent = 'Ładowanie…'; tick(); timer = setInterval(tick, 3000); }
+      else { panel.hidden = true; btn.textContent = 'Zasoby'; clearInterval(timer); }
+    });
+  }
+  document.querySelectorAll('[data-res-toggle]').forEach(bind);
+})();
+</script>
+{% endblock %}

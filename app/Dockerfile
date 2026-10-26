@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY . .
 
 # Dostęp do socketu libvirt daje grupa hosta (group_add w docker-compose.yml)
-RUN useradd --create-home --uid 1000 app
+RUN useradd --create-home --uid 1000 app \
+    && mkdir -p /data/extensions && chown app:app /data/extensions
 USER app
 
 EXPOSE 5000

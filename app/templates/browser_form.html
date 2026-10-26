@@ -1,0 +1,75 @@
+{% extends "browsers_base.html" %}
+{% block heading %}{{ 'Edycja profilu' if profile else 'Nowy profil przeglądarki' }}{% endblock %}
+{% block content %}
+  <form method="post" class="vm-form">
+    <label>Nazwa profilu
+      <input type="text" name="name" value="{{ form.name }}" maxlength="60" required>
+      <small>Każdy profil ma własne ciasteczka i logowania (jak osobne okno incognito, ale zapamiętywane).</small>
+    </label>
+
+    <div class="vm-grid">
+      <label>Udawany system
+        <select name="os_family">
+          {% for o in os_families %}<option value="{{ o }}" {{ 'selected' if form.os_family == o }}>{{ o }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Język
+        <input type="text" name="lang" list="langs" value="{{ form.lang }}" required>
+        <datalist id="langs">{% for l in langs %}<option value="{{ l }}">{% endfor %}</datalist>
+      </label>
+      <label>Strefa czasowa
+        <input type="text" name="timezone" value="{{ form.timezone }}" required>
+      </label>
+      <label>Rozdzielczość
+        <select name="resolution">
+          {% for r in resolutions %}<option value="{{ r }}" {{ 'selected' if form.resolution == r }}>{{ r }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="vm-grid">
+      <label>Limit RAM sesji (MB)
+        <input type="number" name="ram_mb" min="{{ limits.min_ram }}" max="{{ limits.max_ram }}" value="{{ form.ram_mb }}" required>
+        <small>{{ limits.min_ram }}–{{ limits.max_ram }} MB. Mniej = więcej sesji w puli.</small>
+      </label>
+      <label>Usypiaj po (minuty bez podglądu)
+        <input type="number" name="idle_minutes" min="0" max="1440" value="{{ form.idle_minutes }}">
+        <small>0 = nigdy. Nie dotyczy sesji „w tle”.</small>
+      </label>
+    </div>
+
+    <label class="br-check"><input type="checkbox" name="background" {{ 'checked' if form.background }}>
+      Działaj w tle — sesja trwa po zamknięciu podglądu i nie jest usypiana (zajmuje RAM z puli)</label>
+    <label class="br-check"><input type="checkbox" name="fp_enabled" {{ 'checked' if form.fp_enabled }}>
+      Maskuj fingerprint (UA, ekran, sprzęt, canvas, WebGL, audio, nagłówki Client Hints)</label>
+    <label class="br-check"><input type="checkbox" name="webgl" {{ 'checked' if form.webgl }}>
+      WebGL (programowy; wyłączenie oszczędza RAM/CPU, ale brak WebGL też jest cechą rozpoznawczą)</label>
+    {% if profile %}
+      <label class="br-check"><input type="checkbox" name="regenerate">
+        Wylosuj nowy fingerprint (profil zacznie wyglądać jak inne urządzenie)</label>
+    {% endif %}
+
+    <label>Strona startowa (opcjonalnie)
+      <input type="url" name="start_url" value="{{ form.start_url }}" placeholder="https://…">
+    </label>
+    <label>Proxy (opcjonalnie)
+      <input type="text" name="proxy" value="{{ form.proxy }}" placeholder="http://host:port lub socks5://host:port">
+      <small>Bez loginu i hasła w adresie (Chromium ich nie przyjmie z linii poleceń).</small>
+    </label>
+
+    <fieldset>
+      <legend>Wtyczki Chrome tego profilu</legend>
+      {% for e in exts %}
+        <label class="br-check"><input type="checkbox" name="ext" value="{{ e.id }}" {{ 'checked' if e.id in form.extension_ids }}>
+          {{ e.name }} <small>({{ 'sklep' if e.kind == 'store' else 'wgrana' }})</small></label>
+      {% else %}
+        <small>Brak wtyczek. Dodaj je na stronie <a href="{{ url_for('browser_extensions') }}">Wtyczki</a>.</small>
+      {% endfor %}
+    </fieldset>
+
+    <div class="vm-actions">
+      <button class="vm-btn vm-btn-primary" type="submit">Zapisz</button>
+      <a class="vm-btn" href="{{ url_for('browsers_list') }}">Anuluj</a>
+    </div>
+  </form>
+{% endblock %}

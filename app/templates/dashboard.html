@@ -14,6 +14,7 @@
       <div class="vm-header-actions">
         <span class="vm-user">{{ user.username }}</span>
         <a class="vm-btn vm-btn-primary" href="{{ url_for('new_vm') }}">+ Nowa maszyna</a>
+        <a class="vm-btn" href="{{ url_for('browsers_list') }}">Przeglądarki</a>
         {% if is_admin() %}<a class="vm-btn" href="{{ url_for('admin_panel') }}">Panel admina</a>{% endif %}
         <a class="vm-btn" href="{{ url_for('logout') }}">Wyloguj</a>
       </div>

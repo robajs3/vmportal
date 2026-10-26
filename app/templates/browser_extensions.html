@@ -1,0 +1,51 @@
+{% extends "browsers_base.html" %}
+{% block heading %}Wtyczki Chrome{% endblock %}
+{% block content %}
+  <p class="vm-desc">Wtyczki dodane tutaj możesz włączyć w wybranych profilach (zakładka „Edytuj”). Zmiana działa po restarcie sesji.</p>
+
+  <div class="vm-list">
+    <section class="vm-card">
+      <h2>Ze sklepu Chrome Web Store</h2>
+      <form method="post" action="{{ url_for('browser_extension_store') }}" class="vm-form">
+        <label>Link albo ID wtyczki
+          <input type="text" name="store" required placeholder="https://chromewebstore.google.com/detail/…/abcdefghijklmnopabcdefghijklmnop">
+        </label>
+        <label>Nazwa (opcjonalnie)<input type="text" name="name" maxlength="120"></label>
+        <button class="vm-btn vm-btn-primary" type="submit">Dodaj</button>
+      </form>
+    </section>
+    <section class="vm-card">
+      <h2>Własny plik (.zip / .crx)</h2>
+      <form method="post" action="{{ url_for('browser_extension_upload') }}" enctype="multipart/form-data" class="vm-form">
+        <label>Plik (rozpakowana wtyczka spakowana do ZIP albo CRX, maks. {{ max_mb }} MB)
+          <input type="file" name="file" accept=".zip,.crx" required>
+        </label>
+        <label>Nazwa (opcjonalnie)<input type="text" name="name" maxlength="120"></label>
+        <button class="vm-btn vm-btn-primary" type="submit">Wgraj</button>
+      </form>
+    </section>
+  </div>
+
+  <h2>Twoja lista</h2>
+  {% if not exts %}<p>Pusto.</p>{% endif %}
+  <div class="vm-table-wrap">
+    <table class="vm-table">
+      <thead><tr><th>Nazwa</th><th>Źródło</th><th>Identyfikator</th><th></th></tr></thead>
+      <tbody>
+        {% for e in exts %}
+          <tr>
+            <td>{{ e.name }}</td>
+            <td>{{ 'Chrome Web Store' if e.kind == 'store' else 'wgrana' }}</td>
+            <td><code>{{ e.ext_id or e.dirname }}</code></td>
+            <td>
+              <form method="post" action="{{ url_for('browser_extension_delete', ext_id=e.id) }}"
+                    onsubmit="return confirm('Usunąć wtyczkę z listy i ze wszystkich profili?');">
+                <button class="vm-btn vm-btn-danger" type="submit">Usuń</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

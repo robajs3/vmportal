@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Profile shield",
+  "version": "1.0.0",
+  "description": "Maskowanie fingerprintu przeglądarki (konfiguracja per profil).",
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["config.js", "inject.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
+      "world": "MAIN"
+    }
+  ]
+}

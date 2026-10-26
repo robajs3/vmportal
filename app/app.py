@@ -14,6 +14,8 @@ from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError, OperationalError
 from werkzeug.utils import secure_filename
 
+import browsers
+import browsers_web
 import guac
 import libvirt_manager as lv
 import sso_client
@@ -239,8 +241,8 @@ def _create_vmportal_user(hub_username: str):
 # publiczne (bez konta) są też strony udostępnienia — zabezpiecza je hasło do linku
 _PUBLIC_ENDPOINTS = {"static", "healthz", "share_access", "share_leave", "guac_denied"}
 # endpointy dostępne dla zalogowanego, ale jeszcze niezatwierdzonego usera
-# guac_auth sam zwraca 401/403 (a nie redirect), bo woła go nginx przez auth_request
-_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "guac_auth"}
+# guac_auth i br_auth same zwracają 401/403 (a nie redirect), bo woła go nginx przez auth_request
+_NO_ACCESS_ENDPOINTS = _PUBLIC_ENDPOINTS | {"no_access", "logout", "login", "guac_auth", "br_auth"}
 
 
 @app.before_request
@@ -1001,6 +1003,13 @@ def wait_for_db_and_init():
 
     raise RuntimeError("Nie udało się połączyć z bazą danych po wielu próbach.")
 
+
+# Podstrona „Przeglądarki” (wirtualne przeglądarki w kontenerach) - modele muszą być
+# zarejestrowane PRZED db.create_all() w wait_for_db_and_init().
+browsers_web.register(
+    app, db, browsers.Orchestrator(secret=app.config["SECRET_KEY"]),
+    is_admin=is_admin, has_access=has_access, User=User,
+)
 
 wait_for_db_and_init()
 

@@ -1,0 +1,102 @@
+{% extends "browsers_base.html" %}
+{% block title %}{{ p.name }}{% endblock %}
+{% block heading %}{{ p.name }}{% endblock %}
+{% block actions %}
+  <form method="post" action="{{ url_for('browser_stop', profile_id=p.id) }}" style="margin:0">
+    <button class="vm-btn" type="submit">Stop</button>
+  </form>
+{% endblock %}
+{% block content %}
+  <p class="vm-desc">Wyjście do listy nie zamyka sesji: {{ 'ta sesja działa w tle i nie zostanie uśpiona.' if p.background else ('zostanie uśpiona po ' ~ p.idle_minutes ~ ' min bez podglądu.' if p.idle_minutes else 'będzie działać do ręcznego zatrzymania.') }}</p>
+
+  <div id="br-wait" class="vm-flash vm-flash-warn">
+    <span id="br-wait-text">{{ 'Uruchamianie sesji…' if state == 'running' else 'Sesja jest zatrzymana.' }}</span>
+    {% if state != 'running' %}
+      <form method="post" action="{{ url_for('browser_start', profile_id=p.id) }}" style="display:inline">
+        <button class="vm-btn vm-btn-primary" type="submit">Start</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <iframe id="br-frame" class="br-frame" hidden
+          allow="autoplay; fullscreen; clipboard-read; clipboard-write; microphone; camera"
+          referrerpolicy="no-referrer"></iframe>
+
+  <section class="vm-card br-section">
+    <h2>Skrypty (Python + Playwright)</h2>
+    <p class="vm-desc">Skrypt działa na tej samej przeglądarce i profilu (ciasteczka, wtyczki) — także gdy nikt nie ogląda sesji.
+      Dostępne zmienne: <code>page</code>, <code>context</code>, <code>browser</code>, <code>playwright</code>. Wynik <code>print()</code> pojawi się poniżej.</p>
+    <textarea id="br-code" class="br-code" spellcheck="false" rows="10">{{ script }}</textarea>
+    <div class="vm-actions">
+      <label class="br-inline">Limit czasu (s)
+        <input type="number" id="br-timeout" value="120" min="5" max="{{ max_run }}" style="width:90px"></label>
+      <button class="vm-btn vm-btn-primary" id="br-run" type="button">Uruchom</button>
+      <button class="vm-btn" id="br-kill" type="button">Zatrzymaj</button>
+      <span id="br-run-state" class="vm-specs"></span>
+    </div>
+    <pre id="br-log" class="br-log"></pre>
+  </section>
+
+  <section class="vm-card br-section">
+    <h2>Fingerprint profilu</h2>
+    {% if fp_pretty %}<pre class="br-log">{{ fp_pretty }}</pre>
+    {% else %}<p class="vm-desc">Maskowanie wyłączone w tym profilu.</p>{% endif %}
+  </section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var statusUrl = {{ url_for('browser_status', profile_id=p.id)|tojson }};
+  var embed = {{ embed_url|tojson }} + '?usr=' + encodeURIComponent({{ usr|tojson }}) + '&pwd=' + encodeURIComponent({{ pwd|tojson }});
+  var frame = document.getElementById('br-frame'), wait = document.getElementById('br-wait');
+  var loaded = false;
+
+  function poll() {
+    fetch(statusUrl, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.state === 'running' && j.ready && !loaded) {
+        loaded = true; frame.src = embed; frame.hidden = false; wait.hidden = true; return;
+      }
+      if (j.state !== 'running') {
+        loaded = false; frame.hidden = true; frame.removeAttribute('src'); wait.hidden = false;
+        document.getElementById('br-wait-text').textContent = 'Sesja jest zatrzymana.';
+      }
+      setTimeout(poll, 1500);
+    }).catch(function () { setTimeout(poll, 3000); });
+  }
+  {% if state == 'running' %}poll();{% endif %}
+
+  // --- skrypty ---
+  var runBtn = document.getElementById('br-run'), killBtn = document.getElementById('br-kill');
+  var logEl = document.getElementById('br-log'), stEl = document.getElementById('br-run-state');
+  var timer = null;
+  function post(url, body) {
+    return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}) }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+  }
+  function pollScript() {
+    fetch({{ url_for('browser_script_status', profile_id=p.id)|tojson }}, { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (j.error) { stEl.textContent = j.error; return; }
+        logEl.textContent = j.log || '';
+        if (j.status === 'running') { stEl.textContent = 'działa…'; timer = setTimeout(pollScript, 1500); }
+        else if (j.status === 'finished') { stEl.textContent = 'zakończony (kod ' + j.exit_code + ')'; runBtn.disabled = false; }
+        else { stEl.textContent = ''; runBtn.disabled = false; }
+      }).catch(function () { timer = setTimeout(pollScript, 3000); });
+  }
+  runBtn.addEventListener('click', function () {
+    runBtn.disabled = true; logEl.textContent = ''; stEl.textContent = 'start…';
+    post({{ url_for('browser_script_run', profile_id=p.id)|tojson }},
+         { code: document.getElementById('br-code').value, timeout: parseInt(document.getElementById('br-timeout').value, 10) || 120 })
+      .then(function (res) {
+        if (!res.ok) { stEl.textContent = res.j.error || 'błąd'; runBtn.disabled = false; return; }
+        clearTimeout(timer); pollScript();
+      });
+  });
+  killBtn.addEventListener('click', function () {
+    post({{ url_for('browser_script_stop', profile_id=p.id)|tojson }}).then(function () {
+      clearTimeout(timer); stEl.textContent = 'zatrzymany'; runBtn.disabled = false; });
+  });
+  pollScript();
+})();
+</script>
+{% endblock %}

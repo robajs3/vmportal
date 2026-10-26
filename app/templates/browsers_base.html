@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Przeglądarki{% endblock %} — VM Portal</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vm.css') }}">
+</head>
+<body>
+  <main class="vm-wrap">
+    <header class="vm-header">
+      <h1>{% block heading %}Przeglądarki{% endblock %}</h1>
+      <div class="vm-header-actions">
+        <span class="vm-user">{{ current_user.username }}</span>
+        <a class="vm-btn" href="{{ url_for('dashboard') }}">Maszyny</a>
+        <a class="vm-btn" href="{{ url_for('browsers_list') }}">Przeglądarki</a>
+        <a class="vm-btn" href="{{ url_for('browser_extensions') }}">Wtyczki</a>
+        {% block actions %}{% endblock %}
+        <a class="vm-btn" href="{{ url_for('logout') }}">Wyloguj</a>
+      </div>
+    </header>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="vm-flash vm-flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
